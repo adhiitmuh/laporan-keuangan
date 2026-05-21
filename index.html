@@ -333,6 +333,38 @@
           <button class="btn-primary" id="btn-simpan-kas">Simpan Transaksi</button>
         </div>
 
+        <!-- Transfer Internal -->
+        <div class="form-card" id="form-mutasi-wrap" style="border-top-color:#0891b2;margin-bottom:10px">
+          <h3 style="color:#0e7490">🔄 Transfer Internal (Tunai ↔ Rekening)</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal</label>
+              <input type="date" id="mut-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Dari</label>
+              <select id="mut-dari">
+                <option value="tunai">💵 Tunai</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Ke</label>
+              <select id="mut-ke">
+                <option value="tunai">💵 Tunai</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Jumlah (Rp)</label>
+              <input type="number" id="mut-jumlah" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="mut-ket" placeholder="cth: Setor tunai ke BRI" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-mutasi" style="background:linear-gradient(135deg,#0891b2,#0e7490)">Simpan Transfer</button>
+        </div>
+
         <h3 class="section-title">Riwayat Transaksi Kas</h3>
         <div class="filter-bar">
           <input type="month" id="filter-kas-bulan" />

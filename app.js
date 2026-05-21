@@ -72,6 +72,7 @@ let rekening        = [];
 let anggaranData    = [];  // anggaran non-PO
 let piutangData     = [];  // piutang (uang dipinjamkan)
 let piutangBayar    = [];  // riwayat pembayaran piutang
+let mutasiData      = [];  // transfer internal tunai ↔ rekening
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
 
@@ -419,6 +420,13 @@ function startListeners() {
     renderDashboard();
   }));
 
+  // mutasi internal
+  unsubs.push(onSnapshot(query(collection(db, 'mutasi'), orderBy('tgl', 'desc')), snap => {
+    mutasiData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderDashboard();
+    renderRekening();
+  }));
+
   // piutang
   unsubs.push(onSnapshot(query(collection(db, 'piutang'), orderBy('createdAt', 'desc')), snap => {
     piutangData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -458,6 +466,7 @@ function rekeningName(id) {
 }
 
 function populateRekeningSelects() {
+  // Dropdown kasir (pilih rekening transfer)
   ['kas-rekening'].forEach(selId => {
     const sel = document.getElementById(selId);
     if (!sel) return;
@@ -472,6 +481,21 @@ function populateRekeningSelects() {
       sel.appendChild(opt);
     });
     sel.value = prevVal;
+  });
+
+  // Dropdown mutasi: dari & ke (Tunai + semua rekening)
+  ['mut-dari', 'mut-ke'].forEach(selId => {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    const prevVal = sel.value;
+    sel.innerHTML = '<option value="tunai">💵 Tunai</option>';
+    rekening.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `🏦 ${r.nama} (${r.bank})`;
+      sel.appendChild(opt);
+    });
+    sel.value = prevVal || 'tunai';
   });
 }
 
@@ -562,16 +586,22 @@ function renderDashboard() {
   const tbodySaldo = document.getElementById('tbody-saldo-rek');
   if (tbodySaldo) {
     tbodySaldo.innerHTML = '';
-    const saldoTunai = saldoAwalTunai + kasirData
-      .filter(k => !k.via || k.via === 'tunai')
-      .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+    const mutasiMasukTunai  = mutasiData.filter(m => m.ke   === 'tunai').reduce((a, m) => a + Number(m.jumlah || 0), 0);
+    const mutasiKeluarTunai = mutasiData.filter(m => m.dari === 'tunai').reduce((a, m) => a + Number(m.jumlah || 0), 0);
+    const saldoTunai = saldoAwalTunai
+      + kasirData.filter(k => !k.via || k.via === 'tunai')
+          .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
+      + mutasiMasukTunai - mutasiKeluarTunai;
     const tunaiTr = document.createElement('tr');
     tunaiTr.innerHTML = `<td><strong>Tunai</strong></td><td>—</td><td class="${saldoTunai >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoTunai)}</strong></td>`;
     tbodySaldo.appendChild(tunaiTr);
     rekening.forEach(r => {
-      const s = Number(r.saldoAwal || 0) + kasirData
-        .filter(k => k.rekeningId === r.id)
-        .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+      const mutMasuk  = mutasiData.filter(m => m.ke   === r.id).reduce((a, m) => a + Number(m.jumlah || 0), 0);
+      const mutKeluar = mutasiData.filter(m => m.dari === r.id).reduce((a, m) => a + Number(m.jumlah || 0), 0);
+      const s = Number(r.saldoAwal || 0)
+        + kasirData.filter(k => k.rekeningId === r.id)
+            .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
+        + mutMasuk - mutKeluar;
       const tr = document.createElement('tr');
       tr.innerHTML = `<td><strong>${r.nama}</strong></td><td>${r.bank}${r.noRek ? ' · ' + r.noRek : ''}</td><td class="${s >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(s)}</strong></td>`;
       tbodySaldo.appendChild(tr);
@@ -704,6 +734,32 @@ document.getElementById('tbody-supplier').addEventListener('click', e => {
       toast('Gagal menghapus: ' + err.message, 'error');
     }
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRANSFER INTERNAL (MUTASI)
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('btn-simpan-mutasi').addEventListener('click', async () => {
+  const dari   = document.getElementById('mut-dari').value;
+  const ke     = document.getElementById('mut-ke').value;
+  const jumlah = Number(document.getElementById('mut-jumlah').value) || 0;
+  const tgl    = document.getElementById('mut-tgl').value;
+  if (dari === ke)  { toast('Dari dan Ke tidak boleh sama', 'error'); return; }
+  if (!jumlah)      { toast('Jumlah wajib diisi', 'error'); return; }
+  if (!tgl)         { toast('Tanggal wajib diisi', 'error'); return; }
+  const dariLabel = dari === 'tunai' ? 'Tunai' : (rekening.find(r => r.id === dari)?.nama || dari);
+  const keLabel   = ke   === 'tunai' ? 'Tunai' : (rekening.find(r => r.id === ke)?.nama   || ke);
+  try {
+    await addDoc(collection(db, 'mutasi'), {
+      dari, ke, jumlah, tgl,
+      dariLabel, keLabel,
+      ket: document.getElementById('mut-ket').value.trim() || `Transfer ${dariLabel} → ${keLabel}`,
+      createdAt: serverTimestamp(),
+    });
+    ['mut-jumlah', 'mut-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('mut-tgl').value = today();
+    toast(`✓ Transfer ${dariLabel} → ${keLabel} berhasil dicatat`);
+  } catch (e) { toast('Gagal: ' + e.message, 'error'); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1761,9 +1817,12 @@ function renderRekening() {
   tbody.innerHTML = '';
   rekening.forEach(r => {
     const saldoAwal   = Number(r.saldoAwal || 0);
-    const saldoSkrng  = saldoAwal + kasirData
-      .filter(k => k.rekeningId === r.id)
-      .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+    const mutMasuk    = mutasiData.filter(m => m.ke   === r.id).reduce((a, m) => a + Number(m.jumlah || 0), 0);
+    const mutKeluar   = mutasiData.filter(m => m.dari === r.id).reduce((a, m) => a + Number(m.jumlah || 0), 0);
+    const saldoSkrng  = saldoAwal
+      + kasirData.filter(k => k.rekeningId === r.id)
+          .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
+      + mutMasuk - mutKeluar;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${r.nama}</strong></td>
@@ -1866,3 +1925,5 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
 document.getElementById('beli-tgl').value = today();
 document.getElementById('kas-tgl').value  = today();
 document.getElementById('po-tgl').value   = today();
+document.getElementById('mut-tgl').value  = today();
+document.getElementById('piu-tgl').value  = today();
