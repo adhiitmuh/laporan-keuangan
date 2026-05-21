@@ -1439,19 +1439,20 @@ function renderRekening() {
     const saldoSkrng  = saldoAwal + kasirData
       .filter(k => k.rekeningId === r.id)
       .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
-    // Tab rekening hanya bisa diakses admin/pengurus, jadi tombol edit selalu tampil
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${r.nama}</strong></td>
       <td>${r.bank}</td>
       <td>${r.noRek || '–'}</td>
-      <td>${rupiah(saldoAwal)}</td>
+      <td class="cell-saldo-awal" data-rek-id="${r.id}">
+        <div class="saldo-awal-display" style="display:flex;align-items:center;gap:6px">
+          <span>${rupiah(saldoAwal)}</span>
+          <button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${r.id}" data-current="${saldoAwal}" title="Ubah saldo awal">✏️</button>
+        </div>
+      </td>
       <td class="${saldoSkrng >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoSkrng)}</strong></td>
       <td>
-        <div style="display:flex;gap:4px">
-          <button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${r.id}" data-current="${saldoAwal}">✏️ Saldo Awal</button>
-          <button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button>
-        </div>
+        <button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -1495,19 +1496,41 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
     return;
   }
 
-  // Edit saldo awal rekening
+  // Edit saldo awal rekening — inline di sel tabel
   const editId = e.target.dataset.editSaldoRek;
   if (editId) {
+    const cell    = document.querySelector(`.cell-saldo-awal[data-rek-id="${editId}"]`);
+    if (!cell || cell.querySelector('.inline-saldo-input')) return; // sudah terbuka
     const current = Number(e.target.dataset.current) || 0;
-    const input   = prompt(`Saldo awal rekening (Rp):\n(Kosongkan = 0)`, current);
-    if (input === null) return; // cancel
-    const newVal = Number(input.replace(/[^\d]/g, '')) || 0;
+    cell.innerHTML = `
+      <div style="display:flex;align-items:center;gap:4px">
+        <input class="inline-saldo-input" type="number" value="${current}" min="0"
+          style="width:120px;border:1.5px solid #16a34a;border-radius:6px;padding:4px 8px;font-size:13px;outline:none" />
+        <button class="btn-sm btn-sm-green" data-save-saldo-rek="${editId}">✓</button>
+        <button class="btn-sm btn-sm-red"   data-cancel-saldo-rek="${editId}">✗</button>
+      </div>`;
+    cell.querySelector('.inline-saldo-input').focus();
+    return;
+  }
+
+  // Simpan inline saldo awal
+  const saveId = e.target.dataset.saveSaldoRek;
+  if (saveId) {
+    const cell  = document.querySelector(`.cell-saldo-awal[data-rek-id="${saveId}"]`);
+    const newVal = Number(cell?.querySelector('.inline-saldo-input')?.value) || 0;
     try {
-      await updateDoc(doc(db, 'rekening', editId), { saldoAwal: newVal });
-      toast('Saldo awal rekening diperbarui ✓');
+      await updateDoc(doc(db, 'rekening', saveId), { saldoAwal: newVal });
+      toast('Saldo awal diperbarui ✓');
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
     }
+    return;
+  }
+
+  // Batal edit inline
+  const cancelId = e.target.dataset.cancelSaldoRek;
+  if (cancelId) {
+    renderRekening(); // re-render untuk kembali ke tampilan normal
     return;
   }
 });
