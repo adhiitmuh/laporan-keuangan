@@ -151,10 +151,10 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'piutang', 'laporan', 'admin'],
-  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'piutang', 'laporan'],
+  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
+  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
   kasir:    ['kasir', 'pembelian'],
-  pengawas: ['dashboard', 'po', 'piutang', 'laporan'],
+  pengawas: ['dashboard', 'pembelian', 'kasir', 'po', 'rekening', 'piutang', 'laporan'],
 };
 
 function applyRoleUI(role) {
@@ -227,6 +227,7 @@ function navigateTo(page) {
   if (page === 'admin')     renderUsers();
   if (page === 'rekening')  renderRekening();
   if (page === 'piutang')   renderPiutang();
+  if (page === 'transfer')  renderMutasi();
   if (page === 'po') {
     generatePONumber().then(n => { const el = document.getElementById('po-nomor'); if (el) el.value = n; });
     if (!document.getElementById('tbody-po-items').children.length) addItemRow();
@@ -455,6 +456,7 @@ function startListeners() {
     mutasiData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderDashboard();
     renderRekening();
+    renderMutasi();
   }));
 
   // piutang
@@ -1077,6 +1079,29 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
     btn.textContent = '💾 Konfirmasi Bayar';
   }
 });
+
+function renderMutasi() {
+  const tbody = document.getElementById('tbody-mutasi');
+  if (!tbody) return;
+  const data = [...mutasiData].sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-note">Belum ada riwayat transfer</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  data.forEach(m => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${m.tgl}</td>
+      <td><strong>${m.dariLabel || m.dari}</strong></td>
+      <td><strong>${m.keLabel || m.ke}</strong></td>
+      <td class="text-green"><strong>${rupiah(m.jumlah)}</strong></td>
+      <td>${m.ket || '–'}</td>
+      <td>${inputByBadge(m)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // KASIR page

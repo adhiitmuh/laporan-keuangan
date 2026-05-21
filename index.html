@@ -92,6 +92,7 @@
         <button class="nav-btn nav-po" data-page="po">📋 PO &amp; Budget</button>
         <button class="nav-btn nav-rekening" data-page="rekening">🏦 Rekening</button>
         <button class="nav-btn nav-piutang" data-page="piutang">💳 Piutang</button>
+        <button class="nav-btn nav-transfer" data-page="transfer">🔄 Transfer</button>
         <button class="nav-btn nav-laporan" data-page="laporan">📈 Laporan</button>
         <button class="nav-btn nav-admin" data-page="admin">⚙️ Admin</button>
       </nav>
@@ -338,38 +339,6 @@
             </div>
           </div>
           <button class="btn-primary" id="btn-simpan-kas">Simpan Transaksi</button>
-        </div>
-
-        <!-- Transfer Internal -->
-        <div class="form-card" id="form-mutasi-wrap" style="border-top-color:#0891b2;margin-bottom:10px">
-          <h3 style="color:#0e7490">🔄 Transfer Internal (Tunai ↔ Rekening)</h3>
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Tanggal</label>
-              <input type="date" id="mut-tgl" />
-            </div>
-            <div class="form-group">
-              <label>Dari</label>
-              <select id="mut-dari">
-                <option value="tunai">💵 Tunai</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Ke</label>
-              <select id="mut-ke">
-                <option value="tunai">💵 Tunai</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Jumlah (Rp)</label>
-              <input type="number" id="mut-jumlah" placeholder="0" min="0" />
-            </div>
-            <div class="form-group">
-              <label>Keterangan</label>
-              <input type="text" id="mut-ket" placeholder="cth: Setor tunai ke BRI" />
-            </div>
-          </div>
-          <button class="btn-primary" id="btn-simpan-mutasi" style="background:linear-gradient(135deg,#0891b2,#0e7490)">Simpan Transfer</button>
         </div>
 
         <h3 class="section-title">Riwayat Transaksi Kas</h3>
@@ -748,6 +717,59 @@
             <button class="btn-primary" id="btn-simpan-bayar-piutang">Simpan Pembayaran</button>
             <button class="btn-outline" id="btn-batal-bayar-piutang">Batal</button>
           </div>
+        </div>
+      </section>
+
+      <!-- ─── TRANSFER INTERNAL ───────────────────────────── -->
+      <section id="page-transfer" class="page">
+        <h2 class="page-title">🔄 Transfer Internal</h2>
+
+        <div class="form-card" id="form-mutasi-wrap" style="border-top-color:#0891b2">
+          <h3 style="color:#0e7490">Catat Transfer (Tunai ↔ Rekening)</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal</label>
+              <input type="date" id="mut-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Dari</label>
+              <select id="mut-dari">
+                <option value="tunai">💵 Tunai</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Ke</label>
+              <select id="mut-ke">
+                <option value="tunai">💵 Tunai</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Jumlah (Rp)</label>
+              <input type="number" id="mut-jumlah" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="mut-ket" placeholder="cth: Setor tunai ke BRI" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-mutasi" style="background:linear-gradient(135deg,#0891b2,#0e7490)">Simpan Transfer</button>
+        </div>
+
+        <h3 class="section-title" style="margin-top:24px">Riwayat Transfer</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Dari</th>
+                <th>Ke</th>
+                <th>Jumlah</th>
+                <th>Keterangan</th>
+                <th>Dicatat Oleh</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-mutasi"></tbody>
+          </table>
         </div>
       </section>
 
