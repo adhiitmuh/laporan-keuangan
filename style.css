@@ -149,6 +149,31 @@ body {
 .content { max-width: 1200px; margin: 0 auto; padding: 28px 20px; }
 .page { display: none; }
 .page.active { display: block; }
+
+/* ═══════════════════════════════════════════════════════
+   WELCOME BANNER
+═══════════════════════════════════════════════════════ */
+.dash-welcome {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #9333ea 100%);
+  border-radius: 16px; padding: 22px 28px;
+  margin-bottom: 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 8px 24px rgba(79,70,229,.3);
+  position: relative; overflow: hidden;
+}
+.dash-welcome::before {
+  content: ''; position: absolute; top: -30px; right: 100px;
+  width: 120px; height: 120px; border-radius: 50%;
+  background: rgba(255,255,255,.06);
+}
+.dash-welcome::after {
+  content: ''; position: absolute; bottom: -20px; right: 60px;
+  width: 80px; height: 80px; border-radius: 50%;
+  background: rgba(255,255,255,.04);
+}
+.dash-welcome-title { font-size: 18px; font-weight: 800; color: var(--white); margin-bottom: 4px; }
+.dash-welcome-sub { font-size: 13px; color: rgba(255,255,255,.75); font-weight: 500; }
+.dash-welcome-icon { font-size: 48px; opacity: .8; flex-shrink: 0; }
 .page-title {
   font-size: 22px; font-weight: 800; margin-bottom: 24px;
   color: var(--text); letter-spacing: -.4px;
@@ -169,20 +194,26 @@ body {
   gap: 14px; margin-bottom: 12px;
 }
 .card {
-  border-radius: var(--radius); padding: 20px;
-  box-shadow: var(--shadow); transition: transform .15s, box-shadow .15s;
+  border-radius: var(--radius); padding: 22px 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06), 0 6px 20px rgba(0,0,0,.05);
+  transition: transform .2s, box-shadow .2s;
   border: 1px solid transparent;
+  position: relative; overflow: hidden;
 }
-.card:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,0,0,.1); }
-.card-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; opacity: .7; margin-bottom: 10px; }
-.card-value { font-size: 19px; font-weight: 800; letter-spacing: -.3px; }
+.card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: currentColor; opacity: .3; border-radius: var(--radius) var(--radius) 0 0;
+}
+.card:hover { transform: translateY(-3px); box-shadow: 0 8px 28px rgba(0,0,0,.13); }
+.card-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; opacity: .65; margin-bottom: 8px; }
+.card-value { font-size: 20px; font-weight: 900; letter-spacing: -.5px; }
 
-.card-green  { background: linear-gradient(135deg, #f0fdf4, #dcfce7); color: #065f46; border-color: #a7f3d0; }
-.card-red    { background: linear-gradient(135deg, #fff1f2, #ffe4e6); color: #9f1239; border-color: #fca5a5; }
+.card-green  { background: linear-gradient(135deg, #ecfdf5, #d1fae5); color: #047857; border-color: #a7f3d0; }
+.card-red    { background: linear-gradient(135deg, #fff1f2, #ffe4e6); color: #be123c; border-color: #fca5a5; }
 .card-blue   { background: linear-gradient(135deg, #eef2ff, #e0e7ff); color: #3730a3; border-color: #c7d2fe; }
-.card-orange { background: linear-gradient(135deg, #fffbeb, #fef3c7); color: #92400e; border-color: #fde68a; }
-.card-purple { background: linear-gradient(135deg, #f5f3ff, #ede9fe); color: #5b21b6; border-color: #c4b5fd; }
-.card-teal   { background: linear-gradient(135deg, #f0fdff, #cffafe); color: #164e63; border-color: #a5f3fc; }
+.card-orange { background: linear-gradient(135deg, #fffbeb, #fef3c7); color: #b45309; border-color: #fde68a; }
+.card-purple { background: linear-gradient(135deg, #f5f3ff, #ede9fe); color: #6d28d9; border-color: #c4b5fd; }
+.card-teal   { background: linear-gradient(135deg, #f0fdff, #cffafe); color: #0e7490; border-color: #a5f3fc; }
 
 /* ═══════════════════════════════════════════════════════
    FORMS

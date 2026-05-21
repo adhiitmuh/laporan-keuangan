@@ -149,6 +149,13 @@ function setUserBadge(data) {
     badge.textContent = data.role;
     badge.className = 'role-badge role-' + data.role;
   }
+  const welcomeName = document.getElementById('dash-welcome-name');
+  if (welcomeName) welcomeName.textContent = (data.nama || data.email || '').split(' ')[0];
+  const welcomeDate = document.getElementById('dash-welcome-date');
+  if (welcomeDate) {
+    const now = new Date();
+    welcomeDate.textContent = now.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
