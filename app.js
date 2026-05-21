@@ -1439,7 +1439,7 @@ function renderRekening() {
     const saldoSkrng  = saldoAwal + kasirData
       .filter(k => k.rekeningId === r.id)
       .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
-    const isCanEdit = canApprove(); // admin & pengurus saja
+    // Tab rekening hanya bisa diakses admin/pengurus, jadi tombol edit selalu tampil
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${r.nama}</strong></td>
@@ -1449,7 +1449,7 @@ function renderRekening() {
       <td class="${saldoSkrng >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoSkrng)}</strong></td>
       <td>
         <div style="display:flex;gap:4px">
-          ${isCanEdit ? `<button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${r.id}" data-current="${saldoAwal}">✏️ Saldo Awal</button>` : ''}
+          <button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${r.id}" data-current="${saldoAwal}">✏️ Saldo Awal</button>
           <button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button>
         </div>
       </td>
