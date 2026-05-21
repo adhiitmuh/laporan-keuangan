@@ -70,6 +70,7 @@ let users           = [];
 let poData          = [];
 let rekening        = [];
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
+let editingSupId    = null; // id supplier yang sedang diedit
 
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
@@ -564,6 +565,15 @@ function renderDashboard() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // SUPPLIER page
 // ═══════════════════════════════════════════════════════════════════════════════
+function resetSupForm() {
+  editingSupId = null;
+  ['sup-nama', 'sup-jenis', 'sup-hp', 'sup-ket'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('sup-asal').value = 'Jawa';
+  document.getElementById('sup-form-title').textContent = 'Tambah Supplier';
+  document.getElementById('btn-simpan-sup').textContent = 'Simpan Supplier';
+  document.getElementById('btn-batal-sup').style.display = 'none';
+}
+
 function renderSupplier() {
   const tbody = document.getElementById('tbody-supplier');
   if (!tbody) return;
@@ -586,7 +596,10 @@ function renderSupplier() {
       <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
       <td>${st.hutang <= 0 ? '<span class="badge badge-lunas">Lunas</span>' : '<span class="badge badge-hutang">Ada Hutang</span>'}</td>
       <td style="${isReadOnly ? 'display:none' : ''}">
-        <button class="btn-sm btn-sm-red" data-del-sup="${s.id}">Hapus</button>
+        <div style="display:flex;gap:4px">
+          <button class="btn-sm btn-sm-blue" data-edit-sup="${s.id}">✏️ Edit</button>
+          <button class="btn-sm btn-sm-red"  data-del-sup="${s.id}">Hapus</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
@@ -596,29 +609,58 @@ function renderSupplier() {
 document.getElementById('btn-simpan-sup').addEventListener('click', async () => {
   const nama = document.getElementById('sup-nama').value.trim();
   if (!nama) { toast('Nama supplier wajib diisi', 'error'); return; }
+  const data = {
+    nama,
+    asal:  document.getElementById('sup-asal').value,
+    jenis: document.getElementById('sup-jenis').value.trim() || '-',
+    hp:    document.getElementById('sup-hp').value.trim(),
+    ket:   document.getElementById('sup-ket').value.trim(),
+  };
   try {
-    await addDoc(collection(db, 'suppliers'), {
-      nama,
-      asal:  document.getElementById('sup-asal').value,
-      jenis: document.getElementById('sup-jenis').value.trim() || '-',
-      hp:    document.getElementById('sup-hp').value.trim(),
-      ket:   document.getElementById('sup-ket').value.trim(),
-      createdAt: serverTimestamp(),
-    });
-    ['sup-nama', 'sup-jenis', 'sup-hp', 'sup-ket'].forEach(id => { document.getElementById(id).value = ''; });
-    toast('Supplier berhasil ditambahkan');
+    if (editingSupId) {
+      // Mode edit — update dokumen yang ada
+      await updateDoc(doc(db, 'suppliers', editingSupId), data);
+      toast('Supplier berhasil diperbarui ✓');
+    } else {
+      // Mode tambah baru
+      await addDoc(collection(db, 'suppliers'), { ...data, createdAt: serverTimestamp() });
+      toast('Supplier berhasil ditambahkan');
+    }
+    resetSupForm();
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
   }
 });
 
+document.getElementById('btn-batal-sup').addEventListener('click', () => resetSupForm());
+
 document.getElementById('tbody-supplier').addEventListener('click', e => {
-  const id = e.target.dataset.delSup;
-  if (!id) return;
-  const s = suppliers.find(x => x.id === id);
+  // Edit supplier
+  const editId = e.target.dataset.editSup;
+  if (editId) {
+    const s = suppliers.find(x => x.id === editId);
+    if (!s) return;
+    editingSupId = editId;
+    document.getElementById('sup-nama').value  = s.nama  || '';
+    document.getElementById('sup-asal').value  = s.asal  || 'Jawa';
+    document.getElementById('sup-jenis').value = s.jenis !== '-' ? (s.jenis || '') : '';
+    document.getElementById('sup-hp').value    = s.hp    || '';
+    document.getElementById('sup-ket').value   = s.ket   || '';
+    document.getElementById('sup-form-title').textContent    = `Edit Supplier: ${s.nama}`;
+    document.getElementById('btn-simpan-sup').textContent    = 'Update Supplier';
+    document.getElementById('btn-batal-sup').style.display   = '';
+    // Scroll ke form
+    document.getElementById('form-supplier-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  // Hapus supplier
+  const delId = e.target.dataset.delSup;
+  if (!delId) return;
+  const s = suppliers.find(x => x.id === delId);
   confirmDelete(`Hapus supplier <strong>${s?.nama || ''}</strong>?`, async () => {
     try {
-      await deleteDoc(doc(db, 'suppliers', id));
+      await deleteDoc(doc(db, 'suppliers', delId));
       toast('Supplier dihapus');
     } catch (err) {
       toast('Gagal menghapus: ' + err.message, 'error');

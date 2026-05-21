@@ -374,7 +374,7 @@
       <section id="page-supplier" class="page">
         <h2 class="page-title">Supplier &amp; Hutang</h2>
         <div class="form-card action-form" id="form-supplier-wrap">
-          <h3>Tambah Supplier</h3>
+          <h3 id="sup-form-title">Tambah Supplier</h3>
           <div class="form-grid">
             <div class="form-group">
               <label>Nama Supplier</label>
@@ -401,7 +401,10 @@
               <input type="text" id="sup-ket" placeholder="Opsional" />
             </div>
           </div>
-          <button class="btn-primary" id="btn-simpan-sup">Simpan Supplier</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn-primary" id="btn-simpan-sup">Simpan Supplier</button>
+            <button class="btn-outline" id="btn-batal-sup" style="display:none">Batal</button>
+          </div>
         </div>
 
         <h3 class="section-title">Daftar Supplier &amp; Posisi Hutang</h3>
