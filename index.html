@@ -613,8 +613,22 @@
       <!-- ─── REKENING ──────────────────────────────────── -->
       <section id="page-rekening" class="page">
         <h2 class="page-title">Manajemen Rekening</h2>
+
+        <!-- Saldo Awal Tunai -->
+        <div class="form-card action-form" id="form-saldo-tunai-wrap">
+          <h3>💵 Saldo Awal Kas Tunai</h3>
+          <div class="form-grid" style="max-width:360px">
+            <div class="form-group">
+              <label>Saldo Awal Tunai (Rp)</label>
+              <input type="number" id="saldo-awal-tunai" placeholder="0" min="0" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-saldo-tunai">Simpan Saldo Awal Tunai</button>
+        </div>
+
+        <!-- Tambah Rekening -->
         <div class="form-card action-form" id="form-rekening-wrap">
-          <h3>Tambah Rekening</h3>
+          <h3>🏦 Tambah Rekening</h3>
           <div class="form-grid">
             <div class="form-group">
               <label>Nama Rekening</label>
@@ -628,6 +642,10 @@
               <label>No. Rekening (opsional)</label>
               <input type="text" id="rek-norek" placeholder="cth: 1234567890" />
             </div>
+            <div class="form-group">
+              <label>Saldo Awal (Rp)</label>
+              <input type="number" id="rek-saldo-awal" placeholder="0" min="0" />
+            </div>
           </div>
           <button class="btn-primary" id="btn-simpan-rek">Simpan Rekening</button>
         </div>
@@ -640,8 +658,9 @@
                 <th>Nama Rekening</th>
                 <th>Bank / Platform</th>
                 <th>No. Rekening</th>
-                <th>Saldo</th>
-                <th>Aksi</th>
+                <th>Saldo Awal</th>
+                <th>Saldo Sekarang</th>
+                <th class="col-aksi">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-rekening"></tbody>

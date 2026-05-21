@@ -63,12 +63,13 @@ function getSecondaryAuth() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // State in-memory (diisi oleh onSnapshot)
 // ═══════════════════════════════════════════════════════════════════════════════
-let suppliers = [];
-let pembelian = [];
-let kasirData = [];
-let users     = [];
-let poData    = [];
-let rekening  = [];
+let suppliers       = [];
+let pembelian       = [];
+let kasirData       = [];
+let users           = [];
+let poData          = [];
+let rekening        = [];
+let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
@@ -134,6 +135,14 @@ function applyRoleUI(role) {
   ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
+  });
+
+  // Saldo awal hanya admin & pengurus
+  const saldoForms = ['form-saldo-tunai-wrap', 'form-rekening-wrap'];
+  const showSaldo  = role === 'admin' || role === 'pengurus';
+  saldoForms.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = showSaldo ? '' : 'none';
   });
 
   // Hide hapus buttons via CSS class on the column header (rendered dynamically too)
@@ -397,6 +406,17 @@ function startListeners() {
     renderPO();
     renderDashboard();
   }));
+
+  // settings (saldo awal)
+  unsubs.push(onSnapshot(doc(db, 'settings', 'saldo-awal'), snap => {
+    const d = snap.data() || {};
+    saldoAwalTunai = Number(d.tunai || 0);
+    // isi form input jika sudah ada
+    const inputEl = document.getElementById('saldo-awal-tunai');
+    if (inputEl && !inputEl.dataset.dirty) inputEl.value = saldoAwalTunai || '';
+    renderDashboard();
+    renderRekening();
+  }));
 }
 
 function stopListeners() {
@@ -472,8 +492,9 @@ function renderDashboard() {
   const totalBeli     = pembelian.reduce((a, p) => a + Number(p.total || 0), 0);
   const totalBayarSup = kasirData.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalHutang   = suppliers.reduce((a, s) => a + supplierStats(s.id).hutang, 0);
+  const totalSaldoAwalRekening = rekening.reduce((a, r) => a + Number(r.saldoAwal || 0), 0);
 
-  const saldo = totalMasuk - totalKeluar;
+  const saldo = saldoAwalTunai + totalSaldoAwalRekening + totalMasuk - totalKeluar;
   const totalPOAktif = poData
     .filter(p => p.status === 'pending' || p.status === 'dikirim')
     .reduce((a, p) => a + Number(p.totalNilai || 0), 0);
@@ -502,14 +523,14 @@ function renderDashboard() {
   const tbodySaldo = document.getElementById('tbody-saldo-rek');
   if (tbodySaldo) {
     tbodySaldo.innerHTML = '';
-    const saldoTunai = kasirData
+    const saldoTunai = saldoAwalTunai + kasirData
       .filter(k => !k.via || k.via === 'tunai')
       .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
     const tunaiTr = document.createElement('tr');
     tunaiTr.innerHTML = `<td><strong>Tunai</strong></td><td>—</td><td class="${saldoTunai >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoTunai)}</strong></td>`;
     tbodySaldo.appendChild(tunaiTr);
     rekening.forEach(r => {
-      const s = kasirData
+      const s = Number(r.saldoAwal || 0) + kasirData
         .filter(k => k.rekeningId === r.id)
         .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
       const tr = document.createElement('tr');
@@ -1409,48 +1430,86 @@ function renderRekening() {
   const tbody = document.getElementById('tbody-rekening');
   if (!tbody) return;
   if (!rekening.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-note">Belum ada rekening</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-note">Belum ada rekening</td></tr>';
     return;
   }
   tbody.innerHTML = '';
   rekening.forEach(r => {
-    const saldo = kasirData
+    const saldoAwal   = Number(r.saldoAwal || 0);
+    const saldoSkrng  = saldoAwal + kasirData
       .filter(k => k.rekeningId === r.id)
       .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+    const isCanEdit = canApprove(); // admin & pengurus saja
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${r.nama}</strong></td>
       <td>${r.bank}</td>
-      <td>${r.noRek || '-'}</td>
-      <td class="${saldo >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldo)}</strong></td>
-      <td><button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button></td>
+      <td>${r.noRek || '–'}</td>
+      <td>${rupiah(saldoAwal)}</td>
+      <td class="${saldoSkrng >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoSkrng)}</strong></td>
+      <td>
+        <div style="display:flex;gap:4px">
+          ${isCanEdit ? `<button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${r.id}" data-current="${saldoAwal}">✏️ Saldo Awal</button>` : ''}
+          <button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button>
+        </div>
+      </td>
     `;
     tbody.appendChild(tr);
   });
 }
 
+document.getElementById('btn-simpan-saldo-tunai').addEventListener('click', async () => {
+  const val = Number(document.getElementById('saldo-awal-tunai').value) || 0;
+  try {
+    await setDoc(doc(db, 'settings', 'saldo-awal'), { tunai: val }, { merge: true });
+    toast('Saldo awal tunai disimpan ✓');
+  } catch (e) {
+    toast('Gagal: ' + e.message, 'error');
+  }
+});
+
 document.getElementById('btn-simpan-rek').addEventListener('click', async () => {
-  const nama  = document.getElementById('rek-nama').value.trim();
-  const bank  = document.getElementById('rek-bank').value.trim();
-  const noRek = document.getElementById('rek-norek').value.trim();
+  const nama      = document.getElementById('rek-nama').value.trim();
+  const bank      = document.getElementById('rek-bank').value.trim();
+  const noRek     = document.getElementById('rek-norek').value.trim();
+  const saldoAwal = Number(document.getElementById('rek-saldo-awal').value) || 0;
   if (!nama || !bank) { toast('Nama dan bank wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'rekening'), { nama, bank, noRek, createdAt: serverTimestamp() });
-    ['rek-nama', 'rek-bank', 'rek-norek'].forEach(id => { document.getElementById(id).value = ''; });
+    await addDoc(collection(db, 'rekening'), { nama, bank, noRek, saldoAwal, createdAt: serverTimestamp() });
+    ['rek-nama', 'rek-bank', 'rek-norek', 'rek-saldo-awal'].forEach(id => { document.getElementById(id).value = ''; });
     toast('Rekening berhasil ditambahkan');
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
   }
 });
 
-document.getElementById('tbody-rekening').addEventListener('click', e => {
-  const id = e.target.dataset.delRek;
-  if (!id) return;
-  const r = rekening.find(x => x.id === id);
-  confirmDelete(`Hapus rekening <strong>${r?.nama || ''}</strong>?<br><small style="color:var(--text-muted)">Riwayat transaksi tidak ikut terhapus.</small>`, async () => {
-    try { await deleteDoc(doc(db, 'rekening', id)); toast('Rekening dihapus'); }
-    catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
-  });
+document.getElementById('tbody-rekening').addEventListener('click', async e => {
+  // Hapus rekening
+  const delId = e.target.dataset.delRek;
+  if (delId) {
+    const r = rekening.find(x => x.id === delId);
+    confirmDelete(`Hapus rekening <strong>${r?.nama || ''}</strong>?<br><small style="color:var(--text-muted)">Riwayat transaksi tidak ikut terhapus.</small>`, async () => {
+      try { await deleteDoc(doc(db, 'rekening', delId)); toast('Rekening dihapus'); }
+      catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
+    });
+    return;
+  }
+
+  // Edit saldo awal rekening
+  const editId = e.target.dataset.editSaldoRek;
+  if (editId) {
+    const current = Number(e.target.dataset.current) || 0;
+    const input   = prompt(`Saldo awal rekening (Rp):\n(Kosongkan = 0)`, current);
+    if (input === null) return; // cancel
+    const newVal = Number(input.replace(/[^\d]/g, '')) || 0;
+    try {
+      await updateDoc(doc(db, 'rekening', editId), { saldoAwal: newVal });
+      toast('Saldo awal rekening diperbarui ✓');
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+    return;
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
