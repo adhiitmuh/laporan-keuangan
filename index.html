@@ -247,6 +247,8 @@
                 <th>Total</th>
                 <th>Cara Bayar</th>
                 <th>Keterangan</th>
+                <th>Status</th>
+                <th>Bukti Transfer</th>
                 <th class="col-aksi col-aksi-pembelian">Aksi</th>
               </tr>
             </thead>
@@ -255,11 +257,13 @@
               <tr>
                 <td colspan="5" class="tfoot-label">TOTAL</td>
                 <td id="tfoot-pembelian-total" class="tfoot-value"></td>
-                <td colspan="3"></td>
+                <td colspan="5"></td>
               </tr>
             </tfoot>
           </table>
         </div>
+        <!-- input file tersembunyi untuk upload bukti transfer -->
+        <input type="file" id="bukti-file-input" accept="image/*,application/pdf" style="display:none" />
       </section>
 
       <!-- ─── KASIR ──────────────────────────────────────── -->

@@ -117,7 +117,7 @@ function showScreen(name) {
 const ROLE_PAGES = {
   admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'laporan', 'admin'],
   pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'laporan'],
-  kasir:    ['kasir'],
+  kasir:    ['kasir', 'pembelian'],
   pengawas: ['dashboard', 'po', 'laporan'],
 };
 
@@ -140,6 +140,17 @@ function applyRoleUI(role) {
   document.querySelectorAll('.col-aksi').forEach(th => {
     th.style.display = isReadOnly ? 'none' : '';
   });
+
+  // Approval UI hanya untuk admin & pengurus
+  const canApprove = role === 'admin' || role === 'pengurus';
+  document.querySelectorAll('.col-approval').forEach(el => {
+    el.style.display = canApprove ? '' : 'none';
+  });
+}
+
+// Helper: apakah role saat ini boleh approve
+function canApprove() {
+  return currentRole === 'admin' || currentRole === 'pengurus';
 }
 
 function setUserBadge(data) {
@@ -614,21 +625,50 @@ function renderPembelian(filter = {}) {
   data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-note">Belum ada data pembelian</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-note">Belum ada data pembelian</td></tr>`;
     setEl('tfoot-pembelian-total', rupiah(0));
     return;
   }
 
+  const isReadOnly   = currentRole === 'pengawas';
+  const approvePerms = canApprove();
   tbody.innerHTML = '';
-  const isReadOnly = currentRole === 'pengawas';
   let totalSum = 0;
+
   data.forEach(p => {
     totalSum += Number(p.total || 0);
+
+    // Badge cara bayar
     const bayarBadge = p.caraBayar === 'hutang'
       ? '<span class="badge badge-hutang">Hutang</span>'
       : p.caraBayar === 'tunai'
       ? '<span class="badge badge-tunai">Tunai</span>'
       : '<span class="badge badge-transfer">Transfer</span>';
+
+    // Badge status approval
+    const status = p.statusApproval || 'menunggu';
+    const statusBadge = status === 'disetujui'
+      ? '<span class="badge badge-approval-ok">✓ Disetujui</span>'
+      : status === 'ditolak'
+      ? '<span class="badge badge-approval-no">✗ Ditolak</span>'
+      : '<span class="badge badge-approval-wait">⏳ Menunggu</span>';
+
+    // Bukti transfer cell
+    const buktiHtml = p.buktiTransfer
+      ? `<a href="${p.buktiTransfer}" target="_blank" class="link-bukti">📎 Lihat</a>`
+      : '<span class="text-muted-sm">–</span>';
+
+    // Tombol aksi approval (hanya pengurus/admin)
+    let approvalBtns = '';
+    if (approvePerms) {
+      if (status === 'menunggu') {
+        approvalBtns = `
+          <button class="btn-sm btn-sm-green" data-approve-beli="${p.id}">✓ Setujui</button>
+          <button class="btn-sm btn-sm-red"   data-reject-beli="${p.id}">✗ Tolak</button>`;
+      }
+      approvalBtns += `<button class="btn-sm btn-sm-blue" data-upload-bukti="${p.id}" title="Upload bukti transfer">📎 Bukti</button>`;
+    }
+
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${p.tgl}</td>
@@ -638,14 +678,28 @@ function renderPembelian(filter = {}) {
       <td>${rupiah(p.harga)}</td>
       <td><strong>${rupiah(p.total)}</strong></td>
       <td>${bayarBadge}</td>
-      <td>${p.ket || '-'}</td>
-      <td style="${isReadOnly ? 'display:none' : ''}">
-        <button class="btn-sm btn-sm-red" data-del-beli="${p.id}">Hapus</button>
+      <td>${p.ket || '–'}</td>
+      <td>${statusBadge}</td>
+      <td>${buktiHtml}</td>
+      <td class="col-aksi" style="${isReadOnly ? 'display:none' : ''}">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${approvalBtns}
+          <button class="btn-sm btn-sm-red" data-del-beli="${p.id}">🗑</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
   });
+
   setEl('tfoot-pembelian-total', rupiah(totalSum));
+
+  // Sembunyikan kolom aksi untuk kasir jika bukan approval column
+  if (!approvePerms && !isReadOnly) {
+    // kasir hanya bisa lihat, tidak bisa approve/hapus
+    tbody.querySelectorAll('[data-del-beli]').forEach(btn => {
+      if (currentRole === 'kasir') btn.style.display = 'none';
+    });
+  }
 }
 
 document.getElementById('btn-simpan-beli').addEventListener('click', async () => {
@@ -661,13 +715,17 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
       total: qty * harga,
       caraBayar: document.getElementById('beli-carabayar').value,
       ket: document.getElementById('beli-ket').value.trim(),
+      statusApproval: 'menunggu',
+      buktiTransfer: null,
+      inputBy: currentUser?.uid || '',
+      inputByNama: currentUserData?.nama || '',
       createdAt: serverTimestamp(),
     });
     ['beli-tgl', 'beli-jenis', 'beli-qty', 'beli-harga', 'beli-ket'].forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('beli-total').value = '';
     document.getElementById('beli-supplier').value = '';
     document.getElementById('beli-tgl').value = today();
-    toast('Pembelian berhasil disimpan');
+    toast('Pembelian berhasil disimpan, menunggu approval pengurus');
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
   }
@@ -680,17 +738,77 @@ document.getElementById('btn-filter-beli').addEventListener('click', () => {
   });
 });
 
-document.getElementById('tbody-pembelian').addEventListener('click', e => {
-  const id = e.target.dataset.delBeli;
-  if (!id) return;
-  confirmDelete('Hapus data pembelian ini?', async () => {
+document.getElementById('tbody-pembelian').addEventListener('click', async e => {
+  // Hapus
+  const delId = e.target.dataset.delBeli;
+  if (delId) {
+    confirmDelete('Hapus data pembelian ini?', async () => {
+      try {
+        await deleteDoc(doc(db, 'pembelian', delId));
+        toast('Data pembelian dihapus');
+      } catch (err) {
+        toast('Gagal menghapus: ' + err.message, 'error');
+      }
+    });
+    return;
+  }
+
+  // Setujui
+  const approveId = e.target.dataset.approveBeli;
+  if (approveId && canApprove()) {
     try {
-      await deleteDoc(doc(db, 'pembelian', id));
-      toast('Data pembelian dihapus');
+      await updateDoc(doc(db, 'pembelian', approveId), {
+        statusApproval: 'disetujui',
+        approvedBy:   currentUser?.uid || '',
+        approvedNama: currentUserData?.nama || '',
+        approvedAt:   serverTimestamp(),
+      });
+      toast('Pembelian disetujui');
     } catch (err) {
-      toast('Gagal menghapus: ' + err.message, 'error');
+      toast('Gagal: ' + err.message, 'error');
     }
-  });
+    return;
+  }
+
+  // Tolak
+  const rejectId = e.target.dataset.rejectBeli;
+  if (rejectId && canApprove()) {
+    try {
+      await updateDoc(doc(db, 'pembelian', rejectId), {
+        statusApproval: 'ditolak',
+        approvedBy:   currentUser?.uid || '',
+        approvedNama: currentUserData?.nama || '',
+        approvedAt:   serverTimestamp(),
+      });
+      toast('Pembelian ditolak');
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+    return;
+  }
+
+  // Upload bukti transfer
+  const uploadId = e.target.dataset.uploadBukti;
+  if (uploadId && canApprove()) {
+    const fileInput = document.getElementById('bukti-file-input');
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      toast('Mengupload bukti…');
+      try {
+        const ref = storageRef(storage, `bukti-transfer/${uploadId}_${Date.now()}_${file.name}`);
+        await uploadBytes(ref, file);
+        const url = await getDownloadURL(ref);
+        await updateDoc(doc(db, 'pembelian', uploadId), { buktiTransfer: url });
+        toast('Bukti transfer berhasil diupload ✓');
+      } catch (err) {
+        toast('Gagal upload: ' + err.message, 'error');
+      }
+      fileInput.value = '';
+    };
+    fileInput.click();
+    return;
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
