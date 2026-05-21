@@ -136,7 +136,7 @@ function applyRoleUI(role) {
 
   // Hide action forms for pengawas (read-only)
   const isReadOnly = role === 'pengawas';
-  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap', 'form-anggaran-wrap'].forEach(id => {
+  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap', 'form-anggaran-wrap', 'form-piutang-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
   });
