@@ -95,6 +95,24 @@ const rupiah  = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const today   = () => new Date().toISOString().split('T')[0];
 const monthOf = d => (d ? String(d).slice(0, 7) : '');
 
+// Helper: kembalikan field inputBy untuk disimpan ke Firestore
+function inputByFields() {
+  return {
+    inputBy:     currentUser?.uid || '',
+    inputByNama: currentUserData?.nama || currentUser?.email || '',
+    inputByRole: currentRole || '',
+  };
+}
+
+// Helper: render badge "Diinput Oleh" dari data dokumen
+function inputByBadge(item) {
+  const nama = item.inputByNama || item.inputBy || '';
+  const role = item.inputByRole || users.find(u => u.uid === item.inputBy)?.role || '';
+  if (!nama) return '<span class="text-muted-sm">–</span>';
+  const roleColor = role === 'pengurus' ? '#7c3aed' : role === 'admin' ? '#15803d' : '#2563eb';
+  return `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${nama}</span>${role ? `<br><span style="font-size:10px;color:#9ca3af">${role}</span>` : ''}`;
+}
+
 const KATEGORI_LABEL = {
   'penjualan':      'Penjualan',
   'bayar-supplier': 'Bayar Supplier',
@@ -672,7 +690,7 @@ function renderSupplier() {
   const tbody = document.getElementById('tbody-supplier');
   if (!tbody) return;
   if (!suppliers.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-note">Belum ada supplier</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">Belum ada supplier</td></tr>`;
     return;
   }
   tbody.innerHTML = '';
@@ -689,6 +707,7 @@ function renderSupplier() {
       <td>${rupiah(st.totalBayar)}</td>
       <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
       <td>${st.hutang <= 0 ? '<span class="badge badge-lunas">Lunas</span>' : '<span class="badge badge-hutang">Ada Hutang</span>'}</td>
+      <td>${inputByBadge(s)}</td>
       <td style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px">
           <button class="btn-sm btn-sm-blue" data-edit-sup="${s.id}">✏️ Edit</button>
@@ -717,7 +736,7 @@ document.getElementById('btn-simpan-sup').addEventListener('click', async () => 
       toast('Supplier berhasil diperbarui ✓');
     } else {
       // Mode tambah baru
-      await addDoc(collection(db, 'suppliers'), { ...data, createdAt: serverTimestamp() });
+      await addDoc(collection(db, 'suppliers'), { ...data, ...inputByFields(), createdAt: serverTimestamp() });
       toast('Supplier berhasil ditambahkan');
     }
     resetSupForm();
@@ -780,6 +799,7 @@ document.getElementById('btn-simpan-mutasi').addEventListener('click', async () 
       dari, ke, jumlah, tgl,
       dariLabel, keLabel,
       ket: document.getElementById('mut-ket').value.trim() || `Transfer ${dariLabel} → ${keLabel}`,
+      ...inputByFields(),
       createdAt: serverTimestamp(),
     });
     ['mut-jumlah', 'mut-ket'].forEach(id => { document.getElementById(id).value = ''; });
@@ -853,12 +873,7 @@ function renderPembelian(filter = {}) {
     }
 
     // Badge siapa yang input
-    const inputNama = p.inputByNama || p.inputBy || '–';
-    const inputRole = users.find(u => u.uid === p.inputBy)?.role || '';
-    const roleColor = inputRole === 'pengurus' ? '#7c3aed' : inputRole === 'admin' ? '#15803d' : '#2563eb';
-    const inputBadge = p.inputBy
-      ? `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${inputNama}</span>${inputRole ? `<br><span style="font-size:10px;color:#9ca3af">${inputRole}</span>` : ''}`
-      : '<span class="text-muted-sm">–</span>';
+    const inputBadge = inputByBadge(p);
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -1049,6 +1064,7 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
       rekeningId:  via === 'transfer' ? rekeningId : null,
       ket:         `Auto — bayar pembelian ${p.jenis || ''} (${p.tgl})`,
       autoFromBeli: bayarPembelianId,
+      ...inputByFields(),
       createdAt:   serverTimestamp(),
     });
 
@@ -1109,6 +1125,7 @@ function renderKasir(filter = {}) {
         <td class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(k.jumlah)}</strong></td>
         <td>${!k.via || k.via === 'tunai' ? 'Tunai' : rekeningName(k.rekeningId)}</td>
         <td>${k.ket || '-'}</td>
+        <td>${inputByBadge(k)}</td>
         <td style="${isReadOnly ? 'display:none' : ''}">
           <button class="btn-sm btn-sm-red" data-del-kas="${k.id}">Hapus</button>
         </td>
@@ -1147,6 +1164,7 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
       via,
       rekeningId:  rekeningId  || null,
       ket: document.getElementById('kas-ket').value.trim(),
+      ...inputByFields(),
       createdAt: serverTimestamp(),
     });
     ['kas-tgl', 'kas-jumlah', 'kas-ket'].forEach(id => { document.getElementById(id).value = ''; });
@@ -1555,7 +1573,7 @@ document.getElementById('btn-simpan-po').addEventListener('click', async () => {
   try {
     await addDoc(collection(db, 'po'), {
       noPO, tgl, supplierId: supId, items, totalNilai, caraBayar,
-      status: 'pending', fotoUrl, ket, createdAt: serverTimestamp(),
+      status: 'pending', fotoUrl, ket, ...inputByFields(), createdAt: serverTimestamp(),
     });
     document.getElementById('po-tgl').value    = today();
     document.getElementById('po-supplier').value = '';
@@ -1579,7 +1597,7 @@ function renderPO(filter = {}) {
   if (filter.bulan)      data = data.filter(p => monthOf(p.tgl) === filter.bulan);
   if (filter.supplierId) data = data.filter(p => p.supplierId === filter.supplierId);
 
-  if (!data.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-note">Belum ada Purchase Order</td></tr>'; return; }
+  if (!data.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Belum ada Purchase Order</td></tr>'; return; }
 
   const isReadOnly = currentRole === 'pengawas';
   const statusBadge = {
@@ -1615,6 +1633,7 @@ function renderPO(filter = {}) {
       <td><strong>${rupiah(po.totalNilai)}</strong></td>
       <td>${statusBadge[po.status] || po.status}</td>
       <td>${fotoCell}</td>
+      <td>${inputByBadge(po)}</td>
       <td style="white-space:nowrap">${aksi}</td>
     `;
     tbody.appendChild(tr);
@@ -1690,7 +1709,7 @@ function renderAnggaran() {
   const tbody = document.getElementById('tbody-anggaran');
   if (!tbody) return;
   if (!anggaranData.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">Belum ada rencana anggaran</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-note">Belum ada rencana anggaran</td></tr>';
     return;
   }
   const isReadOnly = currentRole === 'pengawas' || currentRole === 'kasir';
@@ -1705,6 +1724,7 @@ function renderAnggaran() {
       <td>${a.tgl || '–'}</td>
       <td><span class="badge ${st.badge}">${st.label}</span></td>
       <td>${a.ket || '–'}</td>
+      <td>${inputByBadge(a)}</td>
       <td style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${a.status !== 'selesai' && a.status !== 'dibatalkan' ? `
@@ -1745,6 +1765,7 @@ document.getElementById('btn-simpan-ang').addEventListener('click', async () => 
       tgl:    document.getElementById('ang-tgl').value,
       ket:    document.getElementById('ang-ket').value.trim(),
       status: 'rencana',
+      ...inputByFields(),
       createdAt: serverTimestamp(),
     });
     ['ang-nama', 'ang-target', 'ang-tgl', 'ang-ket'].forEach(id => { document.getElementById(id).value = ''; });
@@ -1792,7 +1813,7 @@ function renderPiutang() {
   const tbody = document.getElementById('tbody-piutang');
   if (!tbody) return;
   if (!piutangData.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Belum ada data piutang</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-note">Belum ada data piutang</td></tr>';
     ['tfoot-piu-pinjaman','tfoot-piu-bayar','tfoot-piu-sisa'].forEach(id => setEl(id, rupiah(0)));
     return;
   }
@@ -1824,6 +1845,7 @@ function renderPiutang() {
       <td>${p.cicilan ? rupiah(p.cicilan) + '/bln' : '–'}</td>
       <td>${nextTgl !== '–' ? `<span style="font-weight:600">${nextTgl}</span>` : '–'}</td>
       <td>${lunas ? '<span class="badge badge-lunas">✓ Lunas</span>' : '<span class="badge badge-hutang">Aktif</span>'}</td>
+      <td>${inputByBadge(p)}</td>
       <td style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${!lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${p.id}" data-nama="${p.nama}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
@@ -1852,6 +1874,7 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
       tglCicilan: document.getElementById('piu-tgl-cicilan').value,
       ket:        document.getElementById('piu-ket').value.trim(),
       status:     'aktif',
+      ...inputByFields(),
       createdAt:  serverTimestamp(),
     });
     ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
@@ -1900,6 +1923,7 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
     await addDoc(collection(db, 'piutang_bayar'), {
       piutangId: piuId, jumlah, tgl,
       ket: document.getElementById('bayar-ket').value.trim(),
+      ...inputByFields(),
       createdAt: serverTimestamp(),
     });
     // Cek apakah sudah lunas
