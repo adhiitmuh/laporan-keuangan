@@ -94,6 +94,17 @@ const rupiah  = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const today   = () => new Date().toISOString().split('T')[0];
 const monthOf = d => (d ? String(d).slice(0, 7) : '');
 
+const KATEGORI_LABEL = {
+  'penjualan':      'Penjualan',
+  'bayar-supplier': 'Bayar Supplier',
+  'gaji':           'Gaji Karyawan',
+  'operasional':    'Operasional',
+  'lainnya':        'Lainnya',
+  'pribadi':        'Pribadi / Pemilik',
+  'non-bisnis':     'Non-Bisnis Lainnya',
+};
+const NON_BISNIS_KAT = ['pribadi', 'non-bisnis'];
+
 function toast(msg, type = 'success') {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -1002,11 +1013,15 @@ function renderKasir(filter = {}) {
       const jenisBadge = k.jenis === 'pemasukan'
         ? '<span class="badge badge-pemasukan">Pemasukan</span>'
         : '<span class="badge badge-pengeluaran">Pengeluaran</span>';
+      const isNonBisnis = NON_BISNIS_KAT.includes(k.kategori);
+      const katLabel    = KATEGORI_LABEL[k.kategori] || k.kategori;
+      const nbTag       = isNonBisnis ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : '';
       const tr = document.createElement('tr');
+      if (isNonBisnis) tr.classList.add('row-non-bisnis');
       tr.innerHTML = `
         <td>${k.tgl}</td>
         <td>${jenisBadge}</td>
-        <td>${k.kategori}</td>
+        <td>${katLabel}${nbTag}</td>
         <td>${k.supplierId ? supplierName(k.supplierId) : '-'}</td>
         <td class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(k.jumlah)}</strong></td>
         <td>${!k.via || k.via === 'tunai' ? 'Tunai' : rekeningName(k.rekeningId)}</td>
@@ -1097,14 +1112,21 @@ function renderLaporan() {
 
   const totalBeli     = beliBulan.reduce((a, p) => a + Number(p.total || 0), 0);
   const totalMasuk    = kasirBulan.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
-  const totalKeluar   = kasirBulan.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const keluarSemua   = kasirBulan.filter(k => k.jenis === 'pengeluaran');
+  const keluarBisnis  = keluarSemua.filter(k => !NON_BISNIS_KAT.includes(k.kategori));
+  const keluarNonBisnis = keluarSemua.filter(k => NON_BISNIS_KAT.includes(k.kategori));
+  const totalKeluar         = keluarSemua.reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalKeluarBisnis   = keluarBisnis.reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalKeluarNonBisnis= keluarNonBisnis.reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalBayarSup = kasirBulan.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah || 0), 0);
 
   // Pemasukan & pengeluaran per kategori
   const masukKat = {};
   kasirBulan.filter(k => k.jenis === 'pemasukan').forEach(k => { masukKat[k.kategori] = (masukKat[k.kategori] || 0) + Number(k.jumlah || 0); });
-  const keluarKat = {};
-  kasirBulan.filter(k => k.jenis === 'pengeluaran').forEach(k => { keluarKat[k.kategori] = (keluarKat[k.kategori] || 0) + Number(k.jumlah || 0); });
+  const keluarBisnisKat = {};
+  keluarBisnis.forEach(k => { keluarBisnisKat[k.kategori] = (keluarBisnisKat[k.kategori] || 0) + Number(k.jumlah || 0); });
+  const keluarNonBisnisKat = {};
+  keluarNonBisnis.forEach(k => { keluarNonBisnisKat[k.kategori] = (keluarNonBisnisKat[k.kategori] || 0) + Number(k.jumlah || 0); });
 
   // Hutang kumulatif per supplier s/d bulan ini
   const allBeliUntil  = pembelian.filter(p => monthOf(p.tgl) <= bulan);
@@ -1131,17 +1153,29 @@ function renderLaporan() {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pemasukan</span><span>Rp 0</span></div>`;
   }
   html += `<div class="laporan-row"><span><em>Total Pemasukan</em></span><span class="text-green"><strong>${rupiah(totalMasuk)}</strong></span></div>`;
-  html += `<div class="laporan-row"><span><strong>Pengeluaran</strong></span></div>`;
-  if (Object.keys(keluarKat).length) {
-    Object.entries(keluarKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${kat}</span><span class="text-red">${rupiah(val)}</span></div>`;
+  html += `<div class="laporan-row"><span><strong>Pengeluaran Bisnis</strong></span></div>`;
+  if (Object.keys(keluarBisnisKat).length) {
+    Object.entries(keluarBisnisKat).forEach(([kat, val]) => {
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${KATEGORI_LABEL[kat] || kat}</span><span class="text-red">${rupiah(val)}</span></div>`;
     });
   } else {
-    html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran</span><span>Rp 0</span></div>`;
+    html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran bisnis</span><span>Rp 0</span></div>`;
   }
-  html += `<div class="laporan-row"><span><em>Total Pengeluaran</em></span><span class="text-red"><strong>${rupiah(totalKeluar)}</strong></span></div>`;
-  const saldoBulan = totalMasuk - totalKeluar;
-  html += `<div class="laporan-total"><span>Saldo Bersih</span><span class="${saldoBulan >= 0 ? 'text-green' : 'text-red'}">${rupiah(saldoBulan)}</span></div>`;
+  html += `<div class="laporan-row"><span><em>Total Pengeluaran Bisnis</em></span><span class="text-red"><strong>${rupiah(totalKeluarBisnis)}</strong></span></div>`;
+  html += `<div class="laporan-row" style="margin-top:8px"><span><strong>Pengeluaran Non-Bisnis</strong></span></div>`;
+  if (Object.keys(keluarNonBisnisKat).length) {
+    Object.entries(keluarNonBisnisKat).forEach(([kat, val]) => {
+      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${KATEGORI_LABEL[kat] || kat}</span><span class="text-amber">${rupiah(val)}</span></div>`;
+    });
+  } else {
+    html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran non-bisnis</span><span>Rp 0</span></div>`;
+  }
+  html += `<div class="laporan-row"><span><em>Total Non-Bisnis</em></span><span class="text-amber"><strong>${rupiah(totalKeluarNonBisnis)}</strong></span></div>`;
+  html += `<div class="laporan-row" style="border-top:1px dashed #d1d5db;margin-top:4px;padding-top:8px"><span><em>Total Semua Pengeluaran</em></span><span class="text-red"><strong>${rupiah(totalKeluar)}</strong></span></div>`;
+  const saldoBulan       = totalMasuk - totalKeluar;
+  const saldoBisnisOnly  = totalMasuk - totalKeluarBisnis;
+  html += `<div class="laporan-total"><span>Saldo Bersih (semua)</span><span class="${saldoBulan >= 0 ? 'text-green' : 'text-red'}">${rupiah(saldoBulan)}</span></div>`;
+  html += `<div class="laporan-row text-muted-sm" style="padding:4px 8px;font-size:12px">💡 Saldo bisnis murni (tanpa non-bisnis): <strong class="${saldoBisnisOnly >= 0 ? 'text-green' : 'text-red'}">${rupiah(saldoBisnisOnly)}</strong></div>`;
   html += `</div>`;
 
   // 2. Pembelian Barang
