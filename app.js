@@ -75,6 +75,7 @@ let piutangBayar    = [];  // riwayat pembayaran piutang
 let mutasiData      = [];  // transfer internal tunai ↔ rekening
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
+let bayarPembelianId   = null; // id pembelian yang sedang dikonfirmasi bayar
 
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
@@ -493,6 +494,20 @@ function populateRekeningSelects() {
     });
     sel.value = prevVal;
   });
+
+  // Dropdown modal bayar supplier (Tunai + semua rekening)
+  const bayarRekSel = document.getElementById('bayar-rekening');
+  if (bayarRekSel) {
+    const prevBayar = bayarRekSel.value;
+    bayarRekSel.innerHTML = '<option value="">-- Pilih sumber dana --</option><option value="tunai">💵 Tunai</option>';
+    rekening.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `🏦 ${r.nama} (${r.bank})`;
+      bayarRekSel.appendChild(opt);
+    });
+    if (prevBayar) bayarRekSel.value = prevBayar;
+  }
 
   // Dropdown mutasi: dari & ke (Tunai + semua rekening)
   ['mut-dari', 'mut-ke'].forEach(selId => {
@@ -955,27 +970,86 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
     return;
   }
 
-  // Upload bukti transfer
+  // Upload bukti transfer → buka modal konfirmasi bayar
   const uploadId = e.target.dataset.uploadBukti;
   if (uploadId && canApprove()) {
-    const fileInput = document.getElementById('bukti-file-input');
-    fileInput.onchange = async () => {
-      const file = fileInput.files[0];
-      if (!file) return;
-      toast('Mengupload bukti…');
-      try {
-        const ref = storageRef(storage, `bukti-transfer/${uploadId}_${Date.now()}_${file.name}`);
-        await uploadBytes(ref, file);
-        const url = await getDownloadURL(ref);
-        await updateDoc(doc(db, 'pembelian', uploadId), { buktiTransfer: url });
-        toast('Bukti transfer berhasil diupload ✓');
-      } catch (err) {
-        toast('Gagal upload: ' + err.message, 'error');
-      }
-      fileInput.value = '';
-    };
-    fileInput.click();
+    const p = pembelian.find(x => x.id === uploadId);
+    if (!p) return;
+    bayarPembelianId = uploadId;
+    document.getElementById('bayar-info-supplier').textContent = supplierName(p.supplierId);
+    document.getElementById('bayar-info-total').textContent    = rupiah(p.total);
+    document.getElementById('bayar-tgl').value                 = today();
+    document.getElementById('bayar-bukti-file').value          = '';
+    document.getElementById('modal-bayar').classList.remove('hidden');
     return;
+  }
+});
+
+// ─── Modal Konfirmasi Bayar Supplier ────────────────────────────────────────
+function closeBayarModal() {
+  document.getElementById('modal-bayar').classList.add('hidden');
+  bayarPembelianId = null;
+}
+['btn-bayar-close', 'btn-bayar-cancel'].forEach(id =>
+  document.getElementById(id).addEventListener('click', closeBayarModal)
+);
+
+document.getElementById('btn-bayar-konfirm').addEventListener('click', async () => {
+  if (!bayarPembelianId) return;
+  const tgl       = document.getElementById('bayar-tgl').value;
+  const rekeningId = document.getElementById('bayar-rekening').value;
+  const file      = document.getElementById('bayar-bukti-file').files[0];
+
+  if (!tgl)       { toast('Tanggal bayar wajib diisi', 'error'); return; }
+  if (!rekeningId){ toast('Pilih sumber dana (rekening / tunai)', 'error'); return; }
+
+  const p = pembelian.find(x => x.id === bayarPembelianId);
+  if (!p) { closeBayarModal(); return; }
+
+  const btn = document.getElementById('btn-bayar-konfirm');
+  btn.disabled = true;
+  btn.textContent = '⏳ Menyimpan…';
+
+  try {
+    // 1. Upload bukti (jika ada file)
+    let buktiUrl = p.buktiTransfer || null;
+    if (file) {
+      toast('Mengupload bukti…');
+      const ref = storageRef(storage, `bukti-transfer/${bayarPembelianId}_${Date.now()}_${file.name}`);
+      await uploadBytes(ref, file);
+      buktiUrl = await getDownloadURL(ref);
+    }
+
+    // 2. Update pembelian: bukti + auto-approve
+    await updateDoc(doc(db, 'pembelian', bayarPembelianId), {
+      buktiTransfer:   buktiUrl,
+      statusApproval:  'disetujui',
+      approvedBy:      currentUser?.email || '',
+      approvedAt:      serverTimestamp(),
+    });
+
+    // 3. Buat entri kasir otomatis
+    const via = rekeningId === 'tunai' ? 'tunai' : 'transfer';
+    await addDoc(collection(db, 'kasir'), {
+      tgl,
+      jenis:       'pengeluaran',
+      kategori:    'bayar-supplier',
+      supplierId:  p.supplierId || null,
+      jumlah:      Number(p.total || 0),
+      via,
+      rekeningId:  via === 'transfer' ? rekeningId : null,
+      ket:         `Auto — bayar pembelian ${p.jenis || ''} (${p.tgl})`,
+      autoFromBeli: bayarPembelianId,
+      createdAt:   serverTimestamp(),
+    });
+
+    toast('Pembayaran dikonfirmasi, saldo diperbarui ✓');
+    closeBayarModal();
+  } catch (err) {
+    toast('Gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Konfirmasi Bayar';
   }
 });
 

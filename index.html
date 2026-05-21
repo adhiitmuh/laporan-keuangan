@@ -916,6 +916,42 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL KONFIRMASI BAYAR SUPPLIER
+  ═══════════════════════════════════════════════════════ -->
+  <div id="modal-bayar" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Konfirmasi Pembayaran Supplier</span>
+        <button class="modal-close" id="btn-bayar-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="bayar-info-box" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;line-height:1.8">
+          <div><strong>Supplier:</strong> <span id="bayar-info-supplier">–</span></div>
+          <div><strong>Total:</strong> <span id="bayar-info-total" style="color:#16a34a;font-weight:700">–</span></div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Tanggal Bayar</label>
+          <input type="date" id="bayar-tgl" />
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Bayar dari</label>
+          <select id="bayar-rekening">
+            <option value="">-- Pilih sumber dana --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Bukti Transfer <span style="color:#6b7280;font-weight:400">(opsional)</span></label>
+          <input type="file" id="bayar-bukti-file" accept="image/*,application/pdf" style="font-size:13px;width:100%" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="btn-bayar-cancel">Batal</button>
+        <button class="btn-primary" id="btn-bayar-konfirm">💾 Konfirmasi Bayar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
 
