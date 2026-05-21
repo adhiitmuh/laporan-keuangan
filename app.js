@@ -113,7 +113,7 @@ function showScreen(name) {
 const ROLE_PAGES = {
   admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'laporan', 'admin'],
   pengurus: ['dashboard', 'pembelian', 'supplier', 'laporan'],
-  kasir:    ['dashboard', 'kasir'],
+  kasir:    ['kasir'],
   pengawas: ['dashboard', 'laporan'],
 };
 
@@ -310,7 +310,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     applyRoleUI(currentRole);
     startListeners();
     showScreen('app');
-    navigateTo('dashboard');
+    navigateTo((ROLE_PAGES[currentRole] || ['dashboard'])[0]);
 
   } catch (e) {
     console.error('Error loading user data:', e);
