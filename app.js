@@ -458,6 +458,48 @@ document.getElementById('btn-modal-confirm').addEventListener('click', () => {
   });
 });
 
+// ─── EXPORT / IMPORT ─────────────────────────────────────────────────────────
+document.getElementById('btn-export').addEventListener('click', () => {
+  const data = { suppliers, pembelian, kasir, exportedAt: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const tgl  = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `laporan-keuangan-${tgl}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Data berhasil di-export');
+});
+
+document.getElementById('input-import').addEventListener('change', function () {
+  const file = this.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.suppliers || !data.pembelian || !data.kasir) throw new Error('Format tidak valid');
+      suppliers = data.suppliers;
+      pembelian = data.pembelian;
+      kasir     = data.kasir;
+      save('suppliers', suppliers);
+      save('pembelian', pembelian);
+      save('kasir', kasir);
+      populateSupplierSelects();
+      renderDashboard();
+      renderSupplier();
+      renderPembelian();
+      renderKasir();
+      toast('Data berhasil di-import');
+    } catch {
+      toast('File tidak valid atau rusak', 'error');
+    }
+    this.value = '';
+  };
+  reader.readAsText(file);
+});
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.getElementById('beli-tgl').value = today();
 document.getElementById('kas-tgl').value  = today();
