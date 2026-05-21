@@ -966,7 +966,7 @@ function friendlyError(code) {
     'auth/network-request-failed':    'Koneksi gagal. Periksa internet Anda.',
     'auth/requires-recent-login':     'Sesi expired. Silakan login ulang.',
   };
-  return map[code] || 'Terjadi kesalahan. Silakan coba lagi.';
+  return map[code] || `Terjadi kesalahan (${code || 'unknown'}). Silakan coba lagi.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
