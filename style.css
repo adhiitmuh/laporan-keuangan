@@ -258,6 +258,49 @@ tbody tr:hover { background: #fafafa; }
 /* ═══════════════════════════════════════════════════════
    RESPONSIVE
 ═══════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════
+   PO & BUDGETING
+═══════════════════════════════════════════════════════ */
+.budget-widget {
+  background: var(--white); border-radius: var(--radius);
+  padding: 20px 24px; box-shadow: var(--shadow);
+  display: flex; gap: 0; margin-bottom: 20px;
+  border: 2px solid var(--blue-light);
+}
+.budget-widget-item { flex: 1; padding: 0 20px; }
+.budget-widget-item:first-child { padding-left: 0; }
+.budget-widget-item:last-child { padding-right: 0; }
+.budget-widget-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); margin-bottom: 6px; }
+.budget-widget-value { font-size: 22px; font-weight: 700; }
+.budget-divider { width: 1px; background: var(--gray-border); margin: 4px 0; }
+
+.po-items-section { margin: 16px 0; }
+.po-items-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.po-items-label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.po-items-table-wrap { border: 1px solid var(--gray-border); border-radius: 6px; overflow: hidden; }
+.po-items-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.po-items-table th { background: var(--gray-light); padding: 8px 10px; text-align: left; font-weight: 600; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.po-items-table td { padding: 5px 8px; border-bottom: 1px solid var(--gray-border); }
+.po-items-table tr:last-child td { border-bottom: none; }
+.po-items-table input[type="text"],
+.po-items-table input[type="number"] {
+  border: 1px solid var(--gray-border); border-radius: 4px;
+  padding: 5px 8px; font-size: 13px; width: 100%; outline: none;
+  background: var(--white);
+}
+.po-items-table input:focus { border-color: var(--blue); }
+.po-items-table input[readonly] { background: var(--gray-light); }
+
+.badge-po-pending    { background: var(--orange-light); color: var(--orange); }
+.badge-po-dikirim    { background: var(--blue-light);   color: var(--blue); }
+.badge-po-selesai    { background: var(--green-light);  color: var(--green); }
+.badge-po-dibatalkan { background: var(--gray-light);   color: var(--gray); }
+
+.btn-sm-blue  { background: var(--blue-light);  color: var(--blue); }
+.btn-sm-blue:hover  { background: var(--blue);  color: var(--white); }
+.btn-sm-green { background: var(--green-light); color: var(--green); }
+.btn-sm-green:hover { background: var(--green); color: var(--white); }
+
 @media (max-width: 768px) {
   .topbar { height: auto; padding: 10px 16px; gap: 10px; }
   .topbar-actions { flex-wrap: wrap; }

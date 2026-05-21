@@ -89,6 +89,7 @@
         <button class="nav-btn nav-pembelian" data-page="pembelian">Pembelian</button>
         <button class="nav-btn nav-kasir" data-page="kasir">Kasir</button>
         <button class="nav-btn nav-supplier" data-page="supplier">Supplier &amp; Hutang</button>
+        <button class="nav-btn nav-po" data-page="po">PO &amp; Budget</button>
         <button class="nav-btn nav-laporan" data-page="laporan">Laporan</button>
         <button class="nav-btn nav-admin" data-page="admin">Admin</button>
       </nav>
@@ -131,6 +132,14 @@
           <div class="card card-teal">
             <div class="card-label">Total Bayar ke Supplier</div>
             <div class="card-value" id="dash-bayar-supplier">Rp 0</div>
+          </div>
+          <div class="card card-orange">
+            <div class="card-label">Total PO Aktif</div>
+            <div class="card-value" id="dash-po-aktif">Rp 0</div>
+          </div>
+          <div class="card card-red" id="dash-perlu-card">
+            <div class="card-label">Perlu Disiapkan</div>
+            <div class="card-value" id="dash-perlu-disiapkan">Rp 0</div>
           </div>
         </div>
 
@@ -376,6 +385,129 @@
               </tr>
             </thead>
             <tbody id="tbody-supplier"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─── PO & BUDGETING ──────────────────────────────── -->
+      <section id="page-po" class="page">
+        <h2 class="page-title">Purchase Order &amp; Budgeting</h2>
+
+        <div class="budget-widget">
+          <div class="budget-widget-item">
+            <div class="budget-widget-label">Total PO Aktif</div>
+            <div class="budget-widget-value text-orange" id="bw-po-aktif">Rp 0</div>
+          </div>
+          <div class="budget-divider"></div>
+          <div class="budget-widget-item">
+            <div class="budget-widget-label">Saldo Kas</div>
+            <div class="budget-widget-value text-blue" id="bw-saldo">Rp 0</div>
+          </div>
+          <div class="budget-divider"></div>
+          <div class="budget-widget-item">
+            <div class="budget-widget-label">Perlu Disiapkan</div>
+            <div class="budget-widget-value" id="bw-perlu">Rp 0</div>
+          </div>
+        </div>
+
+        <div class="form-card action-form" id="form-po-wrap">
+          <h3>Buat PO Baru</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>No. PO (otomatis)</label>
+              <input type="text" id="po-nomor" readonly placeholder="PO-202601-001" />
+            </div>
+            <div class="form-group">
+              <label>Tanggal</label>
+              <input type="date" id="po-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Supplier</label>
+              <select id="po-supplier">
+                <option value="">-- Pilih Supplier --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Cara Bayar (saat selesai)</label>
+              <select id="po-carabayar">
+                <option value="hutang">Hutang</option>
+                <option value="tunai">Tunai</option>
+                <option value="transfer">Transfer</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="po-items-section">
+            <div class="po-items-header">
+              <span class="po-items-label">Daftar Item</span>
+              <button type="button" class="btn-outline" id="btn-add-po-item" style="padding:5px 12px;font-size:12px">+ Tambah Item</button>
+            </div>
+            <div class="po-items-table-wrap">
+              <table class="po-items-table">
+                <thead>
+                  <tr>
+                    <th>Nama Barang</th>
+                    <th style="width:80px">Qty</th>
+                    <th>Harga Satuan (Rp)</th>
+                    <th>Subtotal</th>
+                    <th style="width:40px"></th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-po-items"></tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="3" style="text-align:right;font-weight:700;background:var(--gray-light);padding:8px 10px">Total Nilai PO</td>
+                    <td id="tfoot-po-total" style="font-weight:700;background:var(--gray-light);padding:8px 10px">Rp 0</td>
+                    <td style="background:var(--gray-light)"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <div class="form-grid" style="margin-top:16px">
+            <div class="form-group">
+              <label>Foto Lampiran (opsional)</label>
+              <input type="file" id="po-foto" accept="image/*" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="po-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-po">Simpan PO</button>
+        </div>
+
+        <h3 class="section-title">Daftar Purchase Order</h3>
+        <div class="filter-bar">
+          <select id="filter-po-status">
+            <option value="">Semua Status</option>
+            <option value="pending">Pending</option>
+            <option value="dikirim">Dikirim</option>
+            <option value="selesai">Selesai</option>
+            <option value="dibatalkan">Dibatalkan</option>
+          </select>
+          <input type="month" id="filter-po-bulan" />
+          <select id="filter-po-supplier">
+            <option value="">Semua Supplier</option>
+          </select>
+          <button class="btn-outline" id="btn-filter-po">Filter</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>No. PO</th>
+                <th>Tanggal</th>
+                <th>Supplier</th>
+                <th>Item</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th>Foto</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-po"></tbody>
           </table>
         </div>
       </section>

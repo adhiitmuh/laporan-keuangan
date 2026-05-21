@@ -13,6 +13,7 @@ import {
   reauthenticateWithCredential,
   updatePassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 import {
   getFirestore,
   collection,
@@ -43,9 +44,10 @@ const firebaseConfig = {
 };
 
 // Primary app (untuk user yang sedang login)
-const app  = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db   = getFirestore(app);
+const app     = initializeApp(firebaseConfig);
+const auth    = getAuth(app);
+const db      = getFirestore(app);
+const storage = getStorage(app);
 
 // Secondary app (untuk buat user baru tanpa logout admin)
 let secondaryApp  = null;
@@ -65,6 +67,7 @@ let suppliers = [];
 let pembelian = [];
 let kasirData = [];
 let users     = [];
+let poData    = [];
 
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
@@ -111,8 +114,8 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'laporan', 'admin'],
-  pengurus: ['dashboard', 'pembelian', 'supplier', 'laporan'],
+  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'laporan', 'admin'],
+  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'laporan'],
   kasir:    ['kasir'],
   pengawas: ['dashboard', 'laporan'],
 };
@@ -127,7 +130,7 @@ function applyRoleUI(role) {
 
   // Hide action forms for pengawas (read-only)
   const isReadOnly = role === 'pengawas';
-  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap'].forEach(id => {
+  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
   });
@@ -159,6 +162,11 @@ function navigateTo(page) {
   if (page === 'dashboard') renderDashboard();
   if (page === 'laporan')   renderLaporan();
   if (page === 'admin')     renderUsers();
+  if (page === 'po') {
+    generatePONumber().then(n => { const el = document.getElementById('po-nomor'); if (el) el.value = n; });
+    if (!document.getElementById('tbody-po-items').children.length) addItemRow();
+    renderPO();
+  }
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -354,6 +362,13 @@ function startListeners() {
     users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (currentRole === 'admin') renderUsers();
   }));
+
+  // purchase orders
+  unsubs.push(onSnapshot(query(collection(db, 'po'), orderBy('createdAt', 'desc')), snap => {
+    poData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPO();
+    renderDashboard();
+  }));
 }
 
 function stopListeners() {
@@ -379,7 +394,7 @@ function supplierStats(supId) {
 }
 
 function populateSupplierSelects() {
-  ['beli-supplier', 'filter-beli-supplier', 'kas-supplier', 'filter-kas-supplier'].forEach(selId => {
+  ['beli-supplier', 'filter-beli-supplier', 'kas-supplier', 'filter-kas-supplier', 'po-supplier', 'filter-po-supplier'].forEach(selId => {
     const sel = document.getElementById(selId);
     if (!sel) return;
     const prevVal = sel.value;
@@ -406,12 +421,30 @@ function renderDashboard() {
   const totalBayarSup = kasirData.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalHutang   = suppliers.reduce((a, s) => a + supplierStats(s.id).hutang, 0);
 
-  setEl('dash-pemasukan',     rupiah(totalMasuk));
-  setEl('dash-pengeluaran',   rupiah(totalKeluar));
-  setEl('dash-saldo',         rupiah(totalMasuk - totalKeluar));
-  setEl('dash-hutang',        rupiah(totalHutang));
-  setEl('dash-pembelian',     rupiah(totalBeli));
+  const saldo = totalMasuk - totalKeluar;
+  const totalPOAktif = poData
+    .filter(p => p.status === 'pending' || p.status === 'dikirim')
+    .reduce((a, p) => a + Number(p.totalNilai || 0), 0);
+  const perluDisiapkan = Math.max(0, totalPOAktif - saldo);
+
+  setEl('dash-pemasukan',      rupiah(totalMasuk));
+  setEl('dash-pengeluaran',    rupiah(totalKeluar));
+  setEl('dash-saldo',          rupiah(saldo));
+  setEl('dash-hutang',         rupiah(totalHutang));
+  setEl('dash-pembelian',      rupiah(totalBeli));
   setEl('dash-bayar-supplier', rupiah(totalBayarSup));
+  setEl('dash-po-aktif',       rupiah(totalPOAktif));
+  setEl('dash-perlu-disiapkan', rupiah(perluDisiapkan));
+  const perluCard = document.getElementById('dash-perlu-card');
+  if (perluCard) perluCard.className = 'card ' + (perluDisiapkan > 0 ? 'card-red' : 'card-green');
+
+  setEl('bw-po-aktif', rupiah(totalPOAktif));
+  setEl('bw-saldo',    rupiah(saldo));
+  const bwPerlu = document.getElementById('bw-perlu');
+  if (bwPerlu) {
+    bwPerlu.textContent = rupiah(perluDisiapkan);
+    bwPerlu.className = 'budget-widget-value ' + (perluDisiapkan > 0 ? 'text-red' : 'text-green');
+  }
 
   const tbody = document.getElementById('tbody-hutang-summary');
   if (!tbody) return;
@@ -970,7 +1003,215 @@ function friendlyError(code) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PO & BUDGETING
+// ═══════════════════════════════════════════════════════════════════════════════
+async function generatePONumber() {
+  const year  = new Date().getFullYear();
+  const month = String(new Date().getMonth() + 1).padStart(2, '0');
+  const seq   = poData.filter(p => String(p.noPO || '').startsWith(`PO-${year}`)).length + 1;
+  return `PO-${year}${month}-${String(seq).padStart(3, '0')}`;
+}
+
+function addItemRow(nama = '', qty = '', harga = '') {
+  const tbody = document.getElementById('tbody-po-items');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="po-item-nama" placeholder="Nama barang" value="${nama}" /></td>
+    <td><input type="number" class="po-item-qty" placeholder="0" min="0" value="${qty}" /></td>
+    <td><input type="number" class="po-item-harga" placeholder="0" min="0" value="${harga}" /></td>
+    <td><input type="text" class="po-item-total" readonly placeholder="Rp 0" /></td>
+    <td><button type="button" class="btn-sm btn-sm-red btn-del-po-item">✕</button></td>
+  `;
+  tbody.appendChild(tr);
+  const qtyEl   = tr.querySelector('.po-item-qty');
+  const hargaEl = tr.querySelector('.po-item-harga');
+  const totalEl = tr.querySelector('.po-item-total');
+  const calc = () => {
+    totalEl.value = rupiah((Number(qtyEl.value) || 0) * (Number(hargaEl.value) || 0));
+    calcPOTotal();
+  };
+  qtyEl.addEventListener('input', calc);
+  hargaEl.addEventListener('input', calc);
+  if (nama && qty && harga) calc();
+}
+
+function calcPOTotal() {
+  let total = 0;
+  document.querySelectorAll('#tbody-po-items tr').forEach(tr => {
+    total += (Number(tr.querySelector('.po-item-qty')?.value) || 0)
+           * (Number(tr.querySelector('.po-item-harga')?.value) || 0);
+  });
+  setEl('tfoot-po-total', rupiah(total));
+}
+
+document.getElementById('tbody-po-items').addEventListener('click', e => {
+  if (e.target.classList.contains('btn-del-po-item')) {
+    e.target.closest('tr').remove();
+    calcPOTotal();
+  }
+});
+
+document.getElementById('btn-add-po-item').addEventListener('click', () => addItemRow());
+
+document.getElementById('btn-simpan-po').addEventListener('click', async () => {
+  const tgl    = document.getElementById('po-tgl').value;
+  const supId  = document.getElementById('po-supplier').value;
+  const caraBayar = document.getElementById('po-carabayar').value;
+  const ket    = document.getElementById('po-ket').value.trim();
+  const fotoFile = document.getElementById('po-foto').files[0];
+
+  const items = [];
+  let totalNilai = 0;
+  document.querySelectorAll('#tbody-po-items tr').forEach(tr => {
+    const nama  = tr.querySelector('.po-item-nama')?.value.trim();
+    const qty   = Number(tr.querySelector('.po-item-qty')?.value) || 0;
+    const harga = Number(tr.querySelector('.po-item-harga')?.value) || 0;
+    if (nama && qty && harga) { items.push({ nama, qty, harga, total: qty * harga }); totalNilai += qty * harga; }
+  });
+
+  if (!tgl)         { toast('Tanggal wajib diisi', 'error'); return; }
+  if (!supId)       { toast('Pilih supplier', 'error'); return; }
+  if (!items.length){ toast('Tambahkan minimal 1 item', 'error'); return; }
+
+  const noPO = await generatePONumber();
+  let fotoUrl = null;
+
+  if (fotoFile) {
+    try {
+      const snap = await uploadBytes(storageRef(storage, `po-photos/${Date.now()}_${fotoFile.name}`), fotoFile);
+      fotoUrl = await getDownloadURL(snap.ref);
+    } catch {
+      toast('Foto gagal diupload — aktifkan Firebase Storage dulu. PO disimpan tanpa foto.', 'error');
+    }
+  }
+
+  try {
+    await addDoc(collection(db, 'po'), {
+      noPO, tgl, supplierId: supId, items, totalNilai, caraBayar,
+      status: 'pending', fotoUrl, ket, createdAt: serverTimestamp(),
+    });
+    document.getElementById('po-tgl').value    = today();
+    document.getElementById('po-supplier').value = '';
+    document.getElementById('po-ket').value    = '';
+    document.getElementById('po-foto').value   = '';
+    document.getElementById('tbody-po-items').innerHTML = '';
+    setEl('tfoot-po-total', rupiah(0));
+    addItemRow();
+    generatePONumber().then(n => { document.getElementById('po-nomor').value = n; });
+    toast(`PO ${noPO} berhasil dibuat`);
+  } catch (e) {
+    toast('Gagal menyimpan PO: ' + e.message, 'error');
+  }
+});
+
+function renderPO(filter = {}) {
+  const tbody = document.getElementById('tbody-po');
+  if (!tbody) return;
+  let data = [...poData];
+  if (filter.status)     data = data.filter(p => p.status === filter.status);
+  if (filter.bulan)      data = data.filter(p => monthOf(p.tgl) === filter.bulan);
+  if (filter.supplierId) data = data.filter(p => p.supplierId === filter.supplierId);
+
+  if (!data.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-note">Belum ada Purchase Order</td></tr>'; return; }
+
+  const isReadOnly = currentRole === 'pengawas';
+  const statusBadge = {
+    pending:    '<span class="badge badge-po-pending">Pending</span>',
+    dikirim:    '<span class="badge badge-po-dikirim">Dikirim</span>',
+    selesai:    '<span class="badge badge-po-selesai">Selesai</span>',
+    dibatalkan: '<span class="badge badge-po-dibatalkan">Dibatalkan</span>',
+  };
+
+  tbody.innerHTML = '';
+  data.forEach(po => {
+    const itemSummary = (po.items || []).map(i => `${i.nama} (${i.qty}x)`).join(', ');
+    const fotoCell    = po.fotoUrl ? `<a href="${po.fotoUrl}" target="_blank" class="btn-sm btn-sm-blue">Lihat</a>` : '-';
+    let aksi = '';
+    if (!isReadOnly) {
+      if (po.status === 'pending') {
+        aksi += `<button class="btn-sm btn-sm-blue" data-po-status="${po.id}" data-new-status="dikirim" style="margin:1px">Kirim</button>`;
+        aksi += `<button class="btn-sm btn-sm-red"  data-po-status="${po.id}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
+      } else if (po.status === 'dikirim') {
+        aksi += `<button class="btn-sm btn-sm-green" data-po-selesai="${po.id}" style="margin:1px">Selesai</button>`;
+        aksi += `<button class="btn-sm btn-sm-red"   data-po-status="${po.id}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
+      }
+      if (po.status === 'pending' || po.status === 'dikirim') {
+        aksi += `<button class="btn-sm btn-sm-red" data-del-po="${po.id}" style="margin:1px">Hapus</button>`;
+      }
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${po.noPO}</strong></td>
+      <td>${po.tgl}</td>
+      <td>${supplierName(po.supplierId)}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${itemSummary}">${itemSummary}</td>
+      <td><strong>${rupiah(po.totalNilai)}</strong></td>
+      <td>${statusBadge[po.status] || po.status}</td>
+      <td>${fotoCell}</td>
+      <td style="white-space:nowrap">${aksi}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('tbody-po').addEventListener('click', async e => {
+  const statusId = e.target.dataset.poStatus;
+  if (statusId) {
+    const newStatus = e.target.dataset.newStatus;
+    const po = poData.find(p => p.id === statusId);
+    const label = newStatus === 'dikirim' ? 'Tandai Terkirim' : 'Batalkan PO';
+    confirmDelete(`${label} PO <strong>${po?.noPO || ''}</strong>?`, async () => {
+      try { await updateDoc(doc(db, 'po', statusId), { status: newStatus }); toast('PO diperbarui'); }
+      catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, label);
+    return;
+  }
+
+  const selesaiId = e.target.dataset.poSelesai;
+  if (selesaiId) {
+    const po = poData.find(p => p.id === selesaiId);
+    confirmDelete(
+      `Selesaikan PO <strong>${po?.noPO || ''}</strong>?<br><small style="color:var(--text-muted)">${(po?.items||[]).length} item akan masuk ke data Pembelian.</small>`,
+      async () => {
+        try {
+          await Promise.all((po.items || []).map(item =>
+            addDoc(collection(db, 'pembelian'), {
+              tgl: po.tgl, supplierId: po.supplierId,
+              jenis: item.nama, qty: item.qty, harga: item.harga, total: item.total,
+              caraBayar: po.caraBayar || 'hutang',
+              ket: `Dari PO ${po.noPO}`,
+              createdAt: serverTimestamp(),
+            })
+          ));
+          await updateDoc(doc(db, 'po', selesaiId), { status: 'selesai' });
+          toast(`PO ${po.noPO} selesai — ${po.items.length} item masuk ke Pembelian`);
+        } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+      }, 'Selesaikan'
+    );
+    return;
+  }
+
+  const delId = e.target.dataset.delPo;
+  if (delId) {
+    const po = poData.find(p => p.id === delId);
+    confirmDelete(`Hapus PO <strong>${po?.noPO || ''}</strong>?`, async () => {
+      try { await deleteDoc(doc(db, 'po', delId)); toast('PO dihapus'); }
+      catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
+    });
+  }
+});
+
+document.getElementById('btn-filter-po').addEventListener('click', () => {
+  renderPO({
+    status:     document.getElementById('filter-po-status').value,
+    bulan:      document.getElementById('filter-po-bulan').value,
+    supplierId: document.getElementById('filter-po-supplier').value,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Init default dates
 // ═══════════════════════════════════════════════════════════════════════════════
 document.getElementById('beli-tgl').value = today();
 document.getElementById('kas-tgl').value  = today();
+document.getElementById('po-tgl').value   = today();
