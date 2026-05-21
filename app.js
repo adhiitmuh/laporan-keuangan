@@ -852,6 +852,14 @@ function renderPembelian(filter = {}) {
       approvalBtns += `<button class="btn-sm btn-sm-blue" data-upload-bukti="${p.id}" title="Upload bukti transfer">📎 Bukti</button>`;
     }
 
+    // Badge siapa yang input
+    const inputNama = p.inputByNama || p.inputBy || '–';
+    const inputRole = users.find(u => u.uid === p.inputBy)?.role || '';
+    const roleColor = inputRole === 'pengurus' ? '#7c3aed' : inputRole === 'admin' ? '#15803d' : '#2563eb';
+    const inputBadge = p.inputBy
+      ? `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${inputNama}</span>${inputRole ? `<br><span style="font-size:10px;color:#9ca3af">${inputRole}</span>` : ''}`
+      : '<span class="text-muted-sm">–</span>';
+
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${p.tgl}</td>
@@ -862,6 +870,7 @@ function renderPembelian(filter = {}) {
       <td><strong>${rupiah(p.total)}</strong></td>
       <td>${bayarBadge}</td>
       <td>${p.ket || '–'}</td>
+      <td>${inputBadge}</td>
       <td>${statusBadge}</td>
       <td>${buktiHtml}</td>
       <td class="col-aksi" style="${isReadOnly ? 'display:none' : ''}">
