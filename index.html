@@ -91,6 +91,7 @@
         <button class="nav-btn nav-supplier" data-page="supplier">🏭 Supplier</button>
         <button class="nav-btn nav-po" data-page="po">📋 PO &amp; Budget</button>
         <button class="nav-btn nav-rekening" data-page="rekening">🏦 Rekening</button>
+        <button class="nav-btn nav-piutang" data-page="piutang">💳 Piutang</button>
         <button class="nav-btn nav-laporan" data-page="laporan">📈 Laporan</button>
         <button class="nav-btn nav-admin" data-page="admin">⚙️ Admin</button>
       </nav>
@@ -148,6 +149,14 @@
           <div class="card card-red" id="dash-perlu-card">
             <div class="card-label">Perlu Disiapkan</div>
             <div class="card-value" id="dash-perlu-disiapkan">Rp 0</div>
+          </div>
+          <div class="card card-teal">
+            <div class="card-label">Total Piutang Aktif</div>
+            <div class="card-value" id="dash-piutang">Rp 0</div>
+          </div>
+          <div class="card card-blue" style="border-width:2px">
+            <div class="card-label">💼 Total Aset (Kas + Piutang)</div>
+            <div class="card-value" id="dash-total-aset">Rp 0</div>
           </div>
         </div>
 
@@ -606,6 +615,95 @@
             </thead>
             <tbody id="tbody-anggaran"></tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- ─── PIUTANG ─────────────────────────────────────── -->
+      <section id="page-piutang" class="page">
+        <h2 class="page-title">Piutang (Uang di Luar Usaha)</h2>
+
+        <div class="form-card action-form" id="form-piutang-wrap">
+          <h3>Tambah Piutang</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nama Peminjam</label>
+              <input type="text" id="piu-nama" placeholder="cth: Pak Budi, Owner A" />
+            </div>
+            <div class="form-group">
+              <label>Jumlah Pinjaman (Rp)</label>
+              <input type="number" id="piu-jumlah" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Tanggal Pinjam</label>
+              <input type="date" id="piu-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Cicilan per Bulan (Rp)</label>
+              <input type="number" id="piu-cicilan" placeholder="0 = tidak ada cicilan" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Mulai Cicilan</label>
+              <input type="date" id="piu-tgl-cicilan" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="piu-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-piutang">Simpan Piutang</button>
+        </div>
+
+        <h3 class="section-title">Daftar Piutang</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Peminjam</th>
+                <th>Tgl Pinjam</th>
+                <th>Total Pinjaman</th>
+                <th>Sudah Dibayar</th>
+                <th>Sisa Piutang</th>
+                <th>Cicilan/Bulan</th>
+                <th>Bayar Berikutnya</th>
+                <th>Status</th>
+                <th class="col-aksi">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-piutang"></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2" class="tfoot-label">TOTAL PIUTANG AKTIF</td>
+                <td id="tfoot-piu-pinjaman" class="tfoot-value"></td>
+                <td id="tfoot-piu-bayar"    class="tfoot-value"></td>
+                <td id="tfoot-piu-sisa"     class="tfoot-value"></td>
+                <td colspan="4"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- Panel catat bayar (tersembunyi, muncul saat klik Catat Bayar) -->
+        <div id="panel-catat-bayar" class="form-card" style="display:none;margin-top:16px;border-top-color:#0891b2">
+          <h3 id="panel-bayar-title">Catat Pembayaran</h3>
+          <input type="hidden" id="bayar-piutang-id" />
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal Bayar</label>
+              <input type="date" id="bayar-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Jumlah Dibayar (Rp)</label>
+              <input type="number" id="bayar-jumlah" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="bayar-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn-primary" id="btn-simpan-bayar-piutang">Simpan Pembayaran</button>
+            <button class="btn-outline" id="btn-batal-bayar-piutang">Batal</button>
+          </div>
         </div>
       </section>
 

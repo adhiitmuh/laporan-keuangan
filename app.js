@@ -70,6 +70,8 @@ let users           = [];
 let poData          = [];
 let rekening        = [];
 let anggaranData    = [];  // anggaran non-PO
+let piutangData     = [];  // piutang (uang dipinjamkan)
+let piutangBayar    = [];  // riwayat pembayaran piutang
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
 
@@ -118,10 +120,10 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'laporan', 'admin'],
-  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'laporan'],
+  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'piutang', 'laporan', 'admin'],
+  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'piutang', 'laporan'],
   kasir:    ['kasir', 'pembelian'],
-  pengawas: ['dashboard', 'po', 'laporan'],
+  pengawas: ['dashboard', 'po', 'piutang', 'laporan'],
 };
 
 function applyRoleUI(role) {
@@ -193,6 +195,7 @@ function navigateTo(page) {
   if (page === 'laporan')   renderLaporan();
   if (page === 'admin')     renderUsers();
   if (page === 'rekening')  renderRekening();
+  if (page === 'piutang')   renderPiutang();
   if (page === 'po') {
     generatePONumber().then(n => { const el = document.getElementById('po-nomor'); if (el) el.value = n; });
     if (!document.getElementById('tbody-po-items').children.length) addItemRow();
@@ -416,6 +419,18 @@ function startListeners() {
     renderDashboard();
   }));
 
+  // piutang
+  unsubs.push(onSnapshot(query(collection(db, 'piutang'), orderBy('createdAt', 'desc')), snap => {
+    piutangData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPiutang();
+    renderDashboard();
+  }));
+  unsubs.push(onSnapshot(query(collection(db, 'piutang_bayar'), orderBy('createdAt', 'asc')), snap => {
+    piutangBayar = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPiutang();
+    renderDashboard();
+  }));
+
   // settings (saldo awal)
   unsubs.push(onSnapshot(doc(db, 'settings', 'saldo-awal'), snap => {
     const d = snap.data() || {};
@@ -513,6 +528,14 @@ function renderDashboard() {
   const totalKebutuhan  = totalPOAktif + totalAnggaranLain;
   const perluDisiapkan  = Math.max(0, totalKebutuhan - saldo);
 
+  // Piutang aktif
+  const totalPiutangAktif = piutangData
+    .filter(p => p.status !== 'lunas')
+    .reduce((a, p) => {
+      const dibayar = piutangBayar.filter(b => b.piutangId === p.id).reduce((s, b) => s + Number(b.jumlah || 0), 0);
+      return a + Math.max(0, Number(p.jumlah || 0) - dibayar);
+    }, 0);
+
   setEl('dash-pemasukan',      rupiah(totalMasuk));
   setEl('dash-pengeluaran',    rupiah(totalKeluar));
   setEl('dash-saldo',          rupiah(saldo));
@@ -521,6 +544,8 @@ function renderDashboard() {
   setEl('dash-bayar-supplier', rupiah(totalBayarSup));
   setEl('dash-po-aktif',       rupiah(totalPOAktif));
   setEl('dash-perlu-disiapkan', rupiah(perluDisiapkan));
+  setEl('dash-piutang',        rupiah(totalPiutangAktif));
+  setEl('dash-total-aset',     rupiah(saldo + totalPiutangAktif));
   const perluCard = document.getElementById('dash-perlu-card');
   if (perluCard) perluCard.className = 'card ' + (perluDisiapkan > 0 ? 'card-red' : 'card-green');
 
@@ -1567,6 +1592,160 @@ document.getElementById('tbody-anggaran').addEventListener('click', e => {
       toast('Gagal: ' + err.message, 'error');
     }
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PIUTANG
+// ═══════════════════════════════════════════════════════════════════════════════
+function piutangStats(id) {
+  const dibayar = piutangBayar
+    .filter(b => b.piutangId === id)
+    .reduce((a, b) => a + Number(b.jumlah || 0), 0);
+  return dibayar;
+}
+
+function nextCicilanDate(tglMulai, cicilanPerBulan, dibayar, total) {
+  if (!tglMulai || !cicilanPerBulan) return '–';
+  const sisa = total - dibayar;
+  if (sisa <= 0) return '–';
+  const start = new Date(tglMulai);
+  const bulanSudah = Math.floor(dibayar / cicilanPerBulan);
+  const next = new Date(start);
+  next.setMonth(next.getMonth() + bulanSudah);
+  return next.toISOString().slice(0, 10);
+}
+
+function renderPiutang() {
+  const tbody = document.getElementById('tbody-piutang');
+  if (!tbody) return;
+  if (!piutangData.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Belum ada data piutang</td></tr>';
+    ['tfoot-piu-pinjaman','tfoot-piu-bayar','tfoot-piu-sisa'].forEach(id => setEl(id, rupiah(0)));
+    return;
+  }
+  const isReadOnly = currentRole === 'pengawas';
+  tbody.innerHTML = '';
+  let totPinjaman = 0, totBayar = 0, totSisa = 0;
+
+  piutangData.forEach(p => {
+    const dibayar = piutangStats(p.id);
+    const sisa    = Math.max(0, Number(p.jumlah || 0) - dibayar);
+    const lunas   = sisa <= 0 || p.status === 'lunas';
+    const nextTgl = nextCicilanDate(p.tglCicilan, Number(p.cicilan || 0), dibayar, Number(p.jumlah || 0));
+
+    if (!lunas) { totPinjaman += Number(p.jumlah || 0); totBayar += dibayar; totSisa += sisa; }
+
+    const pct = Number(p.jumlah) > 0 ? Math.min(100, Math.round(dibayar / Number(p.jumlah) * 100)) : 0;
+    const tr  = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${p.nama}</strong>${p.ket ? `<br><small style="color:var(--text-muted)">${p.ket}</small>` : ''}</td>
+      <td>${p.tgl || '–'}</td>
+      <td>${rupiah(p.jumlah)}</td>
+      <td>
+        ${rupiah(dibayar)}
+        <div style="height:4px;background:#e2e8f0;border-radius:2px;margin-top:4px;width:80px">
+          <div style="height:4px;background:${lunas?'#16a34a':'#0891b2'};border-radius:2px;width:${pct}%"></div>
+        </div>
+      </td>
+      <td class="${sisa > 0 ? 'text-red' : 'text-green'}"><strong>${rupiah(sisa)}</strong></td>
+      <td>${p.cicilan ? rupiah(p.cicilan) + '/bln' : '–'}</td>
+      <td>${nextTgl !== '–' ? `<span style="font-weight:600">${nextTgl}</span>` : '–'}</td>
+      <td>${lunas ? '<span class="badge badge-lunas">✓ Lunas</span>' : '<span class="badge badge-hutang">Aktif</span>'}</td>
+      <td style="${isReadOnly ? 'display:none' : ''}">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${!lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${p.id}" data-nama="${p.nama}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
+          <button class="btn-sm btn-sm-red" data-del-piutang="${p.id}">Hapus</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  setEl('tfoot-piu-pinjaman', rupiah(totPinjaman));
+  setEl('tfoot-piu-bayar',    rupiah(totBayar));
+  setEl('tfoot-piu-sisa',     rupiah(totSisa));
+}
+
+// Tambah piutang baru
+document.getElementById('btn-simpan-piutang').addEventListener('click', async () => {
+  const nama   = document.getElementById('piu-nama').value.trim();
+  const jumlah = Number(document.getElementById('piu-jumlah').value) || 0;
+  const tgl    = document.getElementById('piu-tgl').value;
+  if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
+  try {
+    await addDoc(collection(db, 'piutang'), {
+      nama, jumlah, tgl,
+      cicilan:    Number(document.getElementById('piu-cicilan').value) || 0,
+      tglCicilan: document.getElementById('piu-tgl-cicilan').value,
+      ket:        document.getElementById('piu-ket').value.trim(),
+      status:     'aktif',
+      createdAt:  serverTimestamp(),
+    });
+    ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('piu-tgl').value = today();
+    toast('Piutang berhasil disimpan ✓');
+  } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+});
+
+// Klik tabel piutang: catat bayar atau hapus
+document.getElementById('tbody-piutang').addEventListener('click', e => {
+  const catId = e.target.dataset.catatBayar;
+  if (catId) {
+    const nama    = e.target.dataset.nama;
+    const cicilan = e.target.dataset.cicilan;
+    document.getElementById('bayar-piutang-id').value = catId;
+    document.getElementById('panel-bayar-title').textContent = `Catat Pembayaran — ${nama}`;
+    document.getElementById('bayar-tgl').value    = today();
+    document.getElementById('bayar-jumlah').value = cicilan > 0 ? cicilan : '';
+    document.getElementById('bayar-ket').value    = '';
+    const panel = document.getElementById('panel-catat-bayar');
+    panel.style.display = '';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  const delId = e.target.dataset.delPiutang;
+  if (!delId) return;
+  const p = piutangData.find(x => x.id === delId);
+  confirmDelete(`Hapus piutang <strong>${p?.nama || ''}</strong>? Riwayat bayar ikut terhapus.`, async () => {
+    try {
+      await deleteDoc(doc(db, 'piutang', delId));
+      // hapus semua bayar terkait
+      const q = await getDocs(query(collection(db, 'piutang_bayar')));
+      await Promise.all(q.docs.filter(d => d.data().piutangId === delId).map(d => deleteDoc(d.ref)));
+      toast('Piutang dihapus');
+    } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  });
+});
+
+// Simpan pembayaran
+document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', async () => {
+  const piuId  = document.getElementById('bayar-piutang-id').value;
+  const jumlah = Number(document.getElementById('bayar-jumlah').value) || 0;
+  const tgl    = document.getElementById('bayar-tgl').value;
+  if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
+  try {
+    await addDoc(collection(db, 'piutang_bayar'), {
+      piutangId: piuId, jumlah, tgl,
+      ket: document.getElementById('bayar-ket').value.trim(),
+      createdAt: serverTimestamp(),
+    });
+    // Cek apakah sudah lunas
+    const p = piutangData.find(x => x.id === piuId);
+    if (p) {
+      const totalBayarBaru = piutangBayar.filter(b => b.piutangId === piuId).reduce((a, b) => a + Number(b.jumlah||0), 0) + jumlah;
+      if (totalBayarBaru >= Number(p.jumlah || 0)) {
+        await updateDoc(doc(db, 'piutang', piuId), { status: 'lunas' });
+        toast('Pembayaran dicatat — Piutang LUNAS! 🎉');
+      } else {
+        toast('Pembayaran berhasil dicatat ✓');
+      }
+    }
+    document.getElementById('panel-catat-bayar').style.display = 'none';
+  } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+});
+
+document.getElementById('btn-batal-bayar-piutang').addEventListener('click', () => {
+  document.getElementById('panel-catat-bayar').style.display = 'none';
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
