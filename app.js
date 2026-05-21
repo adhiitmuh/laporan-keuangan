@@ -1,133 +1,493 @@
-// ─── Storage helpers ─────────────────────────────────────────────────────────
-const load = (key, def = []) => { try { return JSON.parse(localStorage.getItem(key)) ?? def; } catch { return def; } };
-const save = (key, val) => localStorage.setItem(key, JSON.stringify(val));
+// ═══════════════════════════════════════════════════════════════════════════════
+// Firebase imports (SDK v10.14.1 via CDN)
+// ═══════════════════════════════════════════════════════════════════════════════
+import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { initializeApp as initializeSecondaryApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import {
+  getFirestore,
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  orderBy,
+  serverTimestamp,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-// ─── State ───────────────────────────────────────────────────────────────────
-let suppliers  = load('suppliers', []);
-let pembelian  = load('pembelian', []);
-let kasir      = load('kasir', []);
+// ═══════════════════════════════════════════════════════════════════════════════
+// Firebase config
+// ═══════════════════════════════════════════════════════════════════════════════
+const firebaseConfig = {
+  apiKey:            'AIzaSyAScvb0X6pJLvIXMgP7O5QqM85ZgTfX-Go',
+  authDomain:        'laporan-keuangan-hs.firebaseapp.com',
+  projectId:         'laporan-keuangan-hs',
+  storageBucket:     'laporan-keuangan-hs.firebasestorage.app',
+  messagingSenderId: '1029348456158',
+  appId:             '1:1029348456158:web:8de02f1258e332ba96344f',
+  measurementId:     'G-0HTZZ3Z4KX',
+};
 
-// ─── Utils ───────────────────────────────────────────────────────────────────
-const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
-const uid    = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-const today  = () => new Date().toISOString().split('T')[0];
-const monthOf = d => d ? d.slice(0, 7) : '';
+// Primary app (untuk user yang sedang login)
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+// Secondary app (untuk buat user baru tanpa logout admin)
+let secondaryApp  = null;
+let secondaryAuth = null;
+function getSecondaryAuth() {
+  if (!secondaryApp) {
+    secondaryApp  = initializeSecondaryApp(firebaseConfig, 'secondary');
+    secondaryAuth = getAuth(secondaryApp);
+  }
+  return secondaryAuth;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// State in-memory (diisi oleh onSnapshot)
+// ═══════════════════════════════════════════════════════════════════════════════
+let suppliers = [];
+let pembelian = [];
+let kasirData = [];
+let users     = [];
+
+// User yang sedang login
+let currentUser     = null; // Firebase Auth user object
+let currentUserData = null; // Firestore users/{uid} document data
+let currentRole     = null; // string: 'admin' | 'pengurus' | 'kasir' | 'pengawas'
+
+// Unsubscribe handles untuk onSnapshot
+const unsubs = [];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Utils
+// ═══════════════════════════════════════════════════════════════════════════════
+const rupiah  = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+const today   = () => new Date().toISOString().split('T')[0];
+const monthOf = d => (d ? String(d).slice(0, 7) : '');
 
 function toast(msg, type = 'success') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = 'toast ' + type;
   clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.add('hidden'), 2800);
+  el._t = setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-// ─── Navigation ──────────────────────────────────────────────────────────────
-document.querySelectorAll('.nav-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('page-' + btn.dataset.page).classList.add('active');
-    if (btn.dataset.page === 'dashboard') renderDashboard();
-    if (btn.dataset.page === 'laporan') renderLaporan();
+function showEl(id)  { document.getElementById(id)?.classList.remove('hidden'); }
+function hideEl(id)  { document.getElementById(id)?.classList.add('hidden'); }
+function setEl(id, v){ const e = document.getElementById(id); if (e) e.textContent = v; }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Screen switching
+// ═══════════════════════════════════════════════════════════════════════════════
+function showScreen(name) {
+  // name: 'loading' | 'login' | 'setup' | 'app'
+  document.getElementById('global-loading').classList.toggle('hidden', name !== 'loading');
+  document.getElementById('login-screen').classList.toggle('hidden', name !== 'login');
+  document.getElementById('setup-screen').classList.toggle('hidden', name !== 'setup');
+  document.getElementById('app').classList.toggle('hidden', name !== 'app');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Role-based nav / UI
+// ═══════════════════════════════════════════════════════════════════════════════
+const ROLE_PAGES = {
+  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'laporan', 'admin'],
+  pengurus: ['dashboard', 'pembelian', 'supplier', 'laporan'],
+  kasir:    ['dashboard', 'kasir'],
+  pengawas: ['dashboard', 'laporan'],
+};
+
+function applyRoleUI(role) {
+  // Nav buttons
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    const page = btn.dataset.page;
+    const allowed = (ROLE_PAGES[role] || []).includes(page);
+    btn.style.display = allowed ? '' : 'none';
   });
+
+  // Hide action forms for pengawas (read-only)
+  const isReadOnly = role === 'pengawas';
+  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isReadOnly ? 'none' : '';
+  });
+
+  // Hide hapus buttons via CSS class on the column header (rendered dynamically too)
+  document.querySelectorAll('.col-aksi').forEach(th => {
+    th.style.display = isReadOnly ? 'none' : '';
+  });
+}
+
+function setUserBadge(data) {
+  setEl('user-name', data.nama || data.email || '');
+  const badge = document.getElementById('user-role-badge');
+  if (badge) {
+    badge.textContent = data.role;
+    badge.className = 'role-badge role-' + data.role;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Navigation
+// ═══════════════════════════════════════════════════════════════════════════════
+function navigateTo(page) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const pageEl = document.getElementById('page-' + page);
+  if (pageEl) pageEl.classList.add('active');
+
+  if (page === 'dashboard') renderDashboard();
+  if (page === 'laporan')   renderLaporan();
+  if (page === 'admin')     renderUsers();
+}
+
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => navigateTo(btn.dataset.page));
 });
 
-// ─── Supplier helpers ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// First-run check: apakah collection users kosong?
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkFirstRun() {
+  const snap = await getDocs(collection(db, 'users'));
+  return snap.empty;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SETUP SCREEN (admin pertama)
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('btn-setup').addEventListener('click', async () => {
+  const nama     = document.getElementById('setup-nama').value.trim();
+  const email    = document.getElementById('setup-email').value.trim();
+  const password = document.getElementById('setup-password').value;
+  const errEl    = document.getElementById('setup-error');
+  const loadEl   = document.getElementById('setup-loading');
+
+  errEl.classList.add('hidden');
+  if (!nama || !email || !password) { errEl.textContent = 'Semua field wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (password.length < 6) { errEl.textContent = 'Password minimal 6 karakter.'; errEl.classList.remove('hidden'); return; }
+
+  hideEl('btn-setup');
+  showEl('setup-loading');
+
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await setDoc(doc(db, 'users', cred.user.uid), {
+      uid: cred.user.uid, nama, email, role: 'admin', active: true,
+      createdAt: serverTimestamp(),
+    });
+    // onAuthStateChanged akan handle selanjutnya
+  } catch (e) {
+    errEl.textContent = friendlyError(e.code);
+    errEl.classList.remove('hidden');
+    showEl('btn-setup');
+    hideEl('setup-loading');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOGIN SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('btn-login').addEventListener('click', doLogin);
+document.getElementById('login-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+async function doLogin() {
+  const email    = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl    = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+
+  if (!email || !password) { errEl.textContent = 'Email dan password wajib diisi.'; errEl.classList.remove('hidden'); return; }
+
+  hideEl('btn-login');
+  showEl('login-loading');
+
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+    // onAuthStateChanged handle selanjutnya — termasuk cek active
+  } catch (e) {
+    errEl.textContent = friendlyError(e.code);
+    errEl.classList.remove('hidden');
+    showEl('btn-login');
+    hideEl('login-loading');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOGOUT
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  stopListeners();
+  await signOut(auth);
+  currentUser     = null;
+  currentUserData = null;
+  currentRole     = null;
+  showScreen('login');
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-error').classList.add('hidden');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// onAuthStateChanged — titik utama alur app
+// ═══════════════════════════════════════════════════════════════════════════════
+showScreen('loading');
+
+onAuthStateChanged(auth, async (firebaseUser) => {
+  if (!firebaseUser) {
+    // Tidak login — cek first-run
+    try {
+      const isFirst = await checkFirstRun();
+      showScreen(isFirst ? 'setup' : 'login');
+    } catch {
+      showScreen('login');
+    }
+    return;
+  }
+
+  // Ambil data user dari Firestore
+  try {
+    const userSnap = await getDocs(query(collection(db, 'users')));
+    const userDoc  = userSnap.docs.find(d => d.id === firebaseUser.uid);
+    if (!userDoc) {
+      // Data Firestore user tidak ada (mungkin setup belum selesai tulis)
+      // Tunggu sebentar lalu coba lagi dengan logout
+      await signOut(auth);
+      showScreen('login');
+      return;
+    }
+    const userData = userDoc.data();
+
+    // Cek active
+    if (userData.active === false) {
+      await signOut(auth);
+      const errEl = document.getElementById('login-error');
+      errEl.textContent = 'Akun Anda telah dinonaktifkan. Hubungi Admin.';
+      errEl.classList.remove('hidden');
+      showScreen('login');
+      return;
+    }
+
+    currentUser     = firebaseUser;
+    currentUserData = userData;
+    currentRole     = userData.role;
+
+    setUserBadge(userData);
+    applyRoleUI(currentRole);
+    startListeners();
+    showScreen('app');
+    navigateTo('dashboard');
+
+  } catch (e) {
+    console.error('Error loading user data:', e);
+    await signOut(auth);
+    showScreen('login');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Realtime listeners (onSnapshot)
+// ═══════════════════════════════════════════════════════════════════════════════
+function startListeners() {
+  stopListeners();
+
+  // suppliers
+  unsubs.push(onSnapshot(query(collection(db, 'suppliers'), orderBy('createdAt', 'asc')), snap => {
+    suppliers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    populateSupplierSelects();
+    renderSupplier();
+    renderDashboard();
+  }));
+
+  // pembelian
+  unsubs.push(onSnapshot(query(collection(db, 'pembelian'), orderBy('tgl', 'desc')), snap => {
+    pembelian = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPembelian();
+    renderSupplier();
+    renderDashboard();
+  }));
+
+  // kasir
+  unsubs.push(onSnapshot(query(collection(db, 'kasir'), orderBy('tgl', 'desc')), snap => {
+    kasirData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderKasir();
+    renderSupplier();
+    renderDashboard();
+  }));
+
+  // users (admin only — tapi kita tetap load untuk keperluan tampil nama)
+  unsubs.push(onSnapshot(query(collection(db, 'users'), orderBy('createdAt', 'asc')), snap => {
+    users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (currentRole === 'admin') renderUsers();
+  }));
+}
+
+function stopListeners() {
+  unsubs.forEach(u => u && u());
+  unsubs.length = 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Helper: supplier name & stats
+// ═══════════════════════════════════════════════════════════════════════════════
 function supplierName(id) {
   return suppliers.find(s => s.id === id)?.nama || id || '-';
 }
 
 function supplierStats(supId) {
-  const totalBeli = pembelian
+  const totalBeli  = pembelian
     .filter(p => p.supplierId === supId)
-    .reduce((a, p) => a + Number(p.total), 0);
-  const totalBayar = kasir
+    .reduce((a, p) => a + Number(p.total || 0), 0);
+  const totalBayar = kasirData
     .filter(k => k.kategori === 'bayar-supplier' && k.supplierId === supId)
-    .reduce((a, k) => a + Number(k.jumlah), 0);
+    .reduce((a, k) => a + Number(k.jumlah || 0), 0);
   return { totalBeli, totalBayar, hutang: Math.max(0, totalBeli - totalBayar) };
 }
 
 function populateSupplierSelects() {
-  const selects = ['beli-supplier', 'filter-beli-supplier', 'kas-supplier', 'filter-kas-supplier'].map(id => document.getElementById(id)).filter(Boolean);
-  selects.forEach(sel => {
-    const val = sel.value;
-    const first = sel.options[0];
+  ['beli-supplier', 'filter-beli-supplier', 'kas-supplier', 'filter-kas-supplier'].forEach(selId => {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    const prevVal = sel.value;
+    const firstOpt = sel.options[0].cloneNode(true);
     sel.innerHTML = '';
-    sel.appendChild(first);
+    sel.appendChild(firstOpt);
     suppliers.forEach(s => {
       const opt = document.createElement('option');
       opt.value = s.id;
       opt.textContent = `${s.nama} (${s.asal})`;
       sel.appendChild(opt);
     });
-    sel.value = val;
+    sel.value = prevVal;
   });
 }
 
-// ─── SUPPLIER page ────────────────────────────────────────────────────────────
-function renderSupplier() {
-  const tbody = document.getElementById('tbody-supplier');
-  tbody.innerHTML = '';
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderDashboard() {
+  const totalMasuk    = kasirData.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalKeluar   = kasirData.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalBeli     = pembelian.reduce((a, p) => a + Number(p.total || 0), 0);
+  const totalBayarSup = kasirData.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalHutang   = suppliers.reduce((a, s) => a + supplierStats(s.id).hutang, 0);
+
+  setEl('dash-pemasukan',     rupiah(totalMasuk));
+  setEl('dash-pengeluaran',   rupiah(totalKeluar));
+  setEl('dash-saldo',         rupiah(totalMasuk - totalKeluar));
+  setEl('dash-hutang',        rupiah(totalHutang));
+  setEl('dash-pembelian',     rupiah(totalBeli));
+  setEl('dash-bayar-supplier', rupiah(totalBayarSup));
+
+  const tbody = document.getElementById('tbody-hutang-summary');
+  if (!tbody) return;
   if (!suppliers.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Belum ada supplier</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-note">Belum ada data supplier</td></tr>';
     return;
   }
+  tbody.innerHTML = '';
   suppliers.forEach(s => {
     const st = supplierStats(s.id);
-    const status = st.hutang <= 0 ? '<span class="badge badge-lunas">Lunas</span>' : '<span class="badge badge-hutang">Ada Hutang</span>';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${s.nama}</strong></td>
       <td>${s.asal}</td>
-      <td>${s.jenis}</td>
-      <td>${s.hp || '-'}</td>
       <td>${rupiah(st.totalBeli)}</td>
       <td>${rupiah(st.totalBayar)}</td>
       <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
-      <td>${status}</td>
-      <td><button class="btn-sm btn-sm-red" data-del-sup="${s.id}">Hapus</button></td>
+      <td>${st.hutang <= 0 ? '<span class="badge badge-lunas">Lunas</span>' : '<span class="badge badge-hutang">Ada Hutang</span>'}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-document.getElementById('btn-simpan-sup').addEventListener('click', () => {
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUPPLIER page
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderSupplier() {
+  const tbody = document.getElementById('tbody-supplier');
+  if (!tbody) return;
+  if (!suppliers.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-note">Belum ada supplier</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  const isReadOnly = currentRole === 'pengawas';
+  suppliers.forEach(s => {
+    const st = supplierStats(s.id);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${s.nama}</strong></td>
+      <td>${s.asal}</td>
+      <td>${s.jenis || '-'}</td>
+      <td>${s.hp || '-'}</td>
+      <td>${rupiah(st.totalBeli)}</td>
+      <td>${rupiah(st.totalBayar)}</td>
+      <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
+      <td>${st.hutang <= 0 ? '<span class="badge badge-lunas">Lunas</span>' : '<span class="badge badge-hutang">Ada Hutang</span>'}</td>
+      <td style="${isReadOnly ? 'display:none' : ''}">
+        <button class="btn-sm btn-sm-red" data-del-sup="${s.id}">Hapus</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-simpan-sup').addEventListener('click', async () => {
   const nama = document.getElementById('sup-nama').value.trim();
   if (!nama) { toast('Nama supplier wajib diisi', 'error'); return; }
-  suppliers.push({
-    id: uid(),
-    nama,
-    asal: document.getElementById('sup-asal').value,
-    jenis: document.getElementById('sup-jenis').value.trim() || '-',
-    hp: document.getElementById('sup-hp').value.trim(),
-    ket: document.getElementById('sup-ket').value.trim(),
-  });
-  save('suppliers', suppliers);
-  populateSupplierSelects();
-  renderSupplier();
-  renderDashboard();
-  ['sup-nama','sup-jenis','sup-hp','sup-ket'].forEach(id => document.getElementById(id).value = '');
-  toast('Supplier berhasil ditambahkan');
+  try {
+    await addDoc(collection(db, 'suppliers'), {
+      nama,
+      asal:  document.getElementById('sup-asal').value,
+      jenis: document.getElementById('sup-jenis').value.trim() || '-',
+      hp:    document.getElementById('sup-hp').value.trim(),
+      ket:   document.getElementById('sup-ket').value.trim(),
+      createdAt: serverTimestamp(),
+    });
+    ['sup-nama', 'sup-jenis', 'sup-hp', 'sup-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    toast('Supplier berhasil ditambahkan');
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  }
 });
 
 document.getElementById('tbody-supplier').addEventListener('click', e => {
   const id = e.target.dataset.delSup;
   if (!id) return;
   const s = suppliers.find(x => x.id === id);
-  confirmDelete(`Hapus supplier <strong>${s.nama}</strong>?`, () => {
-    suppliers = suppliers.filter(x => x.id !== id);
-    save('suppliers', suppliers);
-    populateSupplierSelects();
-    renderSupplier();
-    renderDashboard();
-    toast('Supplier dihapus');
+  confirmDelete(`Hapus supplier <strong>${s?.nama || ''}</strong>?`, async () => {
+    try {
+      await deleteDoc(doc(db, 'suppliers', id));
+      toast('Supplier dihapus');
+    } catch (err) {
+      toast('Gagal menghapus: ' + err.message, 'error');
+    }
   });
 });
 
-// ─── PEMBELIAN page ───────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// PEMBELIAN page
+// ═══════════════════════════════════════════════════════════════════════════════
 function calcBeliTotal() {
-  const qty = Number(document.getElementById('beli-qty').value) || 0;
+  const qty   = Number(document.getElementById('beli-qty').value) || 0;
   const harga = Number(document.getElementById('beli-harga').value) || 0;
   document.getElementById('beli-total').value = rupiah(qty * harga);
 }
@@ -136,20 +496,23 @@ document.getElementById('beli-harga').addEventListener('input', calcBeliTotal);
 
 function renderPembelian(filter = {}) {
   const tbody = document.getElementById('tbody-pembelian');
-  tbody.innerHTML = '';
+  if (!tbody) return;
   let data = [...pembelian];
-  if (filter.bulan) data = data.filter(p => monthOf(p.tgl) === filter.bulan);
+  if (filter.bulan)      data = data.filter(p => monthOf(p.tgl) === filter.bulan);
   if (filter.supplierId) data = data.filter(p => p.supplierId === filter.supplierId);
-  data.sort((a, b) => b.tgl.localeCompare(a.tgl));
+  data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Belum ada data pembelian</td></tr>';
-    document.getElementById('tfoot-pembelian-total').textContent = rupiah(0);
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-note">Belum ada data pembelian</td></tr>`;
+    setEl('tfoot-pembelian-total', rupiah(0));
     return;
   }
+
+  tbody.innerHTML = '';
+  const isReadOnly = currentRole === 'pengawas';
   let totalSum = 0;
   data.forEach(p => {
-    totalSum += Number(p.total);
+    totalSum += Number(p.total || 0);
     const bayarBadge = p.caraBayar === 'hutang'
       ? '<span class="badge badge-hutang">Hutang</span>'
       : p.caraBayar === 'tunai'
@@ -165,40 +528,43 @@ function renderPembelian(filter = {}) {
       <td><strong>${rupiah(p.total)}</strong></td>
       <td>${bayarBadge}</td>
       <td>${p.ket || '-'}</td>
-      <td><button class="btn-sm btn-sm-red" data-del-beli="${p.id}">Hapus</button></td>
+      <td style="${isReadOnly ? 'display:none' : ''}">
+        <button class="btn-sm btn-sm-red" data-del-beli="${p.id}">Hapus</button>
+      </td>
     `;
     tbody.appendChild(tr);
   });
-  document.getElementById('tfoot-pembelian-total').textContent = rupiah(totalSum);
+  setEl('tfoot-pembelian-total', rupiah(totalSum));
 }
 
-document.getElementById('btn-simpan-beli').addEventListener('click', () => {
-  const tgl = document.getElementById('beli-tgl').value;
-  const supId = document.getElementById('beli-supplier').value;
-  const jenis = document.getElementById('beli-jenis').value.trim();
-  const qty = Number(document.getElementById('beli-qty').value);
-  const harga = Number(document.getElementById('beli-harga').value);
+document.getElementById('btn-simpan-beli').addEventListener('click', async () => {
+  const tgl    = document.getElementById('beli-tgl').value;
+  const supId  = document.getElementById('beli-supplier').value;
+  const jenis  = document.getElementById('beli-jenis').value.trim();
+  const qty    = Number(document.getElementById('beli-qty').value);
+  const harga  = Number(document.getElementById('beli-harga').value);
   if (!tgl || !supId || !jenis || !qty || !harga) { toast('Lengkapi semua field wajib', 'error'); return; }
-  const entry = {
-    id: uid(), tgl, supplierId: supId, jenis, qty, harga,
-    total: qty * harga,
-    caraBayar: document.getElementById('beli-carabayar').value,
-    ket: document.getElementById('beli-ket').value.trim(),
-  };
-  pembelian.push(entry);
-  save('pembelian', pembelian);
-  renderPembelian();
-  renderSupplier();
-  renderDashboard();
-  ['beli-tgl','beli-jenis','beli-qty','beli-harga','beli-ket'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('beli-total').value = '';
-  document.getElementById('beli-supplier').value = '';
-  toast('Pembelian berhasil disimpan');
+  try {
+    await addDoc(collection(db, 'pembelian'), {
+      tgl, supplierId: supId, jenis, qty, harga,
+      total: qty * harga,
+      caraBayar: document.getElementById('beli-carabayar').value,
+      ket: document.getElementById('beli-ket').value.trim(),
+      createdAt: serverTimestamp(),
+    });
+    ['beli-tgl', 'beli-jenis', 'beli-qty', 'beli-harga', 'beli-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('beli-total').value = '';
+    document.getElementById('beli-supplier').value = '';
+    document.getElementById('beli-tgl').value = today();
+    toast('Pembelian berhasil disimpan');
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  }
 });
 
 document.getElementById('btn-filter-beli').addEventListener('click', () => {
   renderPembelian({
-    bulan: document.getElementById('filter-beli-bulan').value,
+    bulan:      document.getElementById('filter-beli-bulan').value,
     supplierId: document.getElementById('filter-beli-supplier').value,
   });
 });
@@ -206,37 +572,42 @@ document.getElementById('btn-filter-beli').addEventListener('click', () => {
 document.getElementById('tbody-pembelian').addEventListener('click', e => {
   const id = e.target.dataset.delBeli;
   if (!id) return;
-  confirmDelete('Hapus data pembelian ini?', () => {
-    pembelian = pembelian.filter(p => p.id !== id);
-    save('pembelian', pembelian);
-    renderPembelian();
-    renderSupplier();
-    renderDashboard();
-    toast('Data pembelian dihapus');
+  confirmDelete('Hapus data pembelian ini?', async () => {
+    try {
+      await deleteDoc(doc(db, 'pembelian', id));
+      toast('Data pembelian dihapus');
+    } catch (err) {
+      toast('Gagal menghapus: ' + err.message, 'error');
+    }
   });
 });
 
-// ─── KASIR page ───────────────────────────────────────────────────────────────
-document.getElementById('kas-kategori').addEventListener('change', function() {
+// ═══════════════════════════════════════════════════════════════════════════════
+// KASIR page
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('kas-kategori').addEventListener('change', function () {
   document.getElementById('kas-supplier-wrap').style.display =
     this.value === 'bayar-supplier' ? '' : 'none';
 });
 
 function renderKasir(filter = {}) {
   const tbody = document.getElementById('tbody-kasir');
-  tbody.innerHTML = '';
-  let data = [...kasir];
+  if (!tbody) return;
+  let data = [...kasirData];
   if (filter.bulan) data = data.filter(k => monthOf(k.tgl) === filter.bulan);
   if (filter.jenis) data = data.filter(k => k.jenis === filter.jenis);
-  data.sort((a, b) => b.tgl.localeCompare(a.tgl));
+  data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   let masuk = 0, keluar = 0;
+  const isReadOnly = currentRole === 'pengawas';
+
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">Belum ada transaksi kas</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-note">Belum ada transaksi kas</td></tr>`;
   } else {
+    tbody.innerHTML = '';
     data.forEach(k => {
-      if (k.jenis === 'pemasukan') masuk += Number(k.jumlah);
-      else keluar += Number(k.jumlah);
+      if (k.jenis === 'pemasukan') masuk  += Number(k.jumlah || 0);
+      else                         keluar += Number(k.jumlah || 0);
       const jenisBadge = k.jenis === 'pemasukan'
         ? '<span class="badge badge-pemasukan">Pemasukan</span>'
         : '<span class="badge badge-pengeluaran">Pengeluaran</span>';
@@ -248,40 +619,49 @@ function renderKasir(filter = {}) {
         <td>${k.supplierId ? supplierName(k.supplierId) : '-'}</td>
         <td class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(k.jumlah)}</strong></td>
         <td>${k.ket || '-'}</td>
-        <td><button class="btn-sm btn-sm-red" data-del-kas="${k.id}">Hapus</button></td>
+        <td style="${isReadOnly ? 'display:none' : ''}">
+          <button class="btn-sm btn-sm-red" data-del-kas="${k.id}">Hapus</button>
+        </td>
       `;
       tbody.appendChild(tr);
     });
   }
-  document.getElementById('tfoot-kas-masuk').textContent = rupiah(masuk);
-  document.getElementById('tfoot-kas-keluar').textContent = rupiah(keluar);
-  const saldo = masuk - keluar;
-  const saldoEl = document.getElementById('tfoot-kas-saldo');
-  saldoEl.textContent = rupiah(saldo);
-  saldoEl.className = 'tfoot-value ' + (saldo >= 0 ? 'text-green' : 'text-red');
+
+  setEl('tfoot-kas-masuk', rupiah(masuk));
+  setEl('tfoot-kas-keluar', rupiah(keluar));
+  const saldo    = masuk - keluar;
+  const saldoEl  = document.getElementById('tfoot-kas-saldo');
+  if (saldoEl) {
+    saldoEl.textContent = rupiah(saldo);
+    saldoEl.className   = 'tfoot-value ' + (saldo >= 0 ? 'text-green' : 'text-red');
+  }
 }
 
-document.getElementById('btn-simpan-kas').addEventListener('click', () => {
-  const tgl = document.getElementById('kas-tgl').value;
-  const jenis = document.getElementById('kas-jenis').value;
-  const kategori = document.getElementById('kas-kategori').value;
-  const jumlah = Number(document.getElementById('kas-jumlah').value);
+document.getElementById('btn-simpan-kas').addEventListener('click', async () => {
+  const tgl       = document.getElementById('kas-tgl').value;
+  const jenis     = document.getElementById('kas-jenis').value;
+  const kategori  = document.getElementById('kas-kategori').value;
+  const jumlah    = Number(document.getElementById('kas-jumlah').value);
   const supplierId = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
+
   if (!tgl || !jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return; }
-  kasir.push({
-    id: uid(), tgl, jenis, kategori, jumlah,
-    supplierId: supplierId || null,
-    ket: document.getElementById('kas-ket').value.trim(),
-  });
-  save('kasir', kasir);
-  renderKasir();
-  renderSupplier();
-  renderDashboard();
-  ['kas-tgl','kas-jumlah','kas-ket'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('kas-supplier').value = '';
-  document.getElementById('kas-supplier-wrap').style.display = 'none';
-  toast('Transaksi berhasil disimpan');
+
+  try {
+    await addDoc(collection(db, 'kasir'), {
+      tgl, jenis, kategori, jumlah,
+      supplierId: supplierId || null,
+      ket: document.getElementById('kas-ket').value.trim(),
+      createdAt: serverTimestamp(),
+    });
+    ['kas-tgl', 'kas-jumlah', 'kas-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('kas-supplier').value = '';
+    document.getElementById('kas-supplier-wrap').style.display = 'none';
+    document.getElementById('kas-tgl').value = today();
+    toast('Transaksi berhasil disimpan');
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  }
 });
 
 document.getElementById('btn-filter-kas').addEventListener('click', () => {
@@ -294,100 +674,71 @@ document.getElementById('btn-filter-kas').addEventListener('click', () => {
 document.getElementById('tbody-kasir').addEventListener('click', e => {
   const id = e.target.dataset.delKas;
   if (!id) return;
-  confirmDelete('Hapus transaksi ini?', () => {
-    kasir = kasir.filter(k => k.id !== id);
-    save('kasir', kasir);
-    renderKasir();
-    renderSupplier();
-    renderDashboard();
-    toast('Transaksi dihapus');
+  confirmDelete('Hapus transaksi ini?', async () => {
+    try {
+      await deleteDoc(doc(db, 'kasir', id));
+      toast('Transaksi dihapus');
+    } catch (err) {
+      toast('Gagal menghapus: ' + err.message, 'error');
+    }
   });
 });
 
-// ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function renderDashboard() {
-  const totalMasuk  = kasir.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah), 0);
-  const totalKeluar = kasir.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah), 0);
-  const totalBeli   = pembelian.reduce((a, p) => a + Number(p.total), 0);
-  const totalBayarSup = kasir.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah), 0);
-  const totalHutang = Math.max(0, suppliers.reduce((a, s) => a + supplierStats(s.id).hutang, 0));
-
-  document.getElementById('dash-pemasukan').textContent    = rupiah(totalMasuk);
-  document.getElementById('dash-pengeluaran').textContent  = rupiah(totalKeluar);
-  document.getElementById('dash-saldo').textContent        = rupiah(totalMasuk - totalKeluar);
-  document.getElementById('dash-hutang').textContent       = rupiah(totalHutang);
-  document.getElementById('dash-pembelian').textContent    = rupiah(totalBeli);
-  document.getElementById('dash-bayar-supplier').textContent = rupiah(totalBayarSup);
-
-  const tbody = document.getElementById('tbody-hutang-summary');
-  tbody.innerHTML = '';
-  if (!suppliers.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-note">Belum ada data supplier</td></tr>';
-    return;
-  }
-  suppliers.forEach(s => {
-    const st = supplierStats(s.id);
-    const status = st.hutang <= 0 ? '<span class="badge badge-lunas">Lunas</span>' : '<span class="badge badge-hutang">Ada Hutang</span>';
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><strong>${s.nama}</strong></td>
-      <td>${s.asal}</td>
-      <td>${rupiah(st.totalBeli)}</td>
-      <td>${rupiah(st.totalBayar)}</td>
-      <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
-      <td>${status}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-// ─── LAPORAN ──────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// LAPORAN page
+// ═══════════════════════════════════════════════════════════════════════════════
 function renderLaporan() {
-  const bulan = document.getElementById('filter-laporan-bulan').value;
+  const bulan  = document.getElementById('filter-laporan-bulan').value;
   const output = document.getElementById('laporan-output');
   if (!bulan) { output.innerHTML = '<p class="empty-note">Pilih bulan dan klik "Tampilkan Laporan"</p>'; return; }
 
   const beliBulan  = pembelian.filter(p => monthOf(p.tgl) === bulan);
-  const kasirBulan = kasir.filter(k => monthOf(k.tgl) === bulan);
+  const kasirBulan = kasirData.filter(k => monthOf(k.tgl) === bulan);
 
-  const totalBeli   = beliBulan.reduce((a, p) => a + Number(p.total), 0);
-  const totalMasuk  = kasirBulan.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah), 0);
-  const totalKeluar = kasirBulan.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah), 0);
-  const totalBayarSup = kasirBulan.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah), 0);
+  const totalBeli     = beliBulan.reduce((a, p) => a + Number(p.total || 0), 0);
+  const totalMasuk    = kasirBulan.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalKeluar   = kasirBulan.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalBayarSup = kasirBulan.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah || 0), 0);
 
-  // Pemasukan per kategori
+  // Pemasukan & pengeluaran per kategori
   const masukKat = {};
-  kasirBulan.filter(k => k.jenis === 'pemasukan').forEach(k => { masukKat[k.kategori] = (masukKat[k.kategori] || 0) + Number(k.jumlah); });
+  kasirBulan.filter(k => k.jenis === 'pemasukan').forEach(k => { masukKat[k.kategori] = (masukKat[k.kategori] || 0) + Number(k.jumlah || 0); });
   const keluarKat = {};
-  kasirBulan.filter(k => k.jenis === 'pengeluaran').forEach(k => { keluarKat[k.kategori] = (keluarKat[k.kategori] || 0) + Number(k.jumlah); });
+  kasirBulan.filter(k => k.jenis === 'pengeluaran').forEach(k => { keluarKat[k.kategori] = (keluarKat[k.kategori] || 0) + Number(k.jumlah || 0); });
 
-  // Hutang per supplier (kumulatif s/d bulan ini)
-  const allBeliUntil = pembelian.filter(p => monthOf(p.tgl) <= bulan);
-  const allBayarUntil = kasir.filter(k => k.kategori === 'bayar-supplier' && monthOf(k.tgl) <= bulan);
+  // Hutang kumulatif per supplier s/d bulan ini
+  const allBeliUntil  = pembelian.filter(p => monthOf(p.tgl) <= bulan);
+  const allBayarUntil = kasirData.filter(k => k.kategori === 'bayar-supplier' && monthOf(k.tgl) <= bulan);
   const hutangRows = suppliers.map(s => {
-    const beli  = allBeliUntil.filter(p => p.supplierId === s.id).reduce((a, p) => a + Number(p.total), 0);
-    const bayar = allBayarUntil.filter(k => k.supplierId === s.id).reduce((a, k) => a + Number(k.jumlah), 0);
+    const beli  = allBeliUntil.filter(p => p.supplierId === s.id).reduce((a, p) => a + Number(p.total || 0), 0);
+    const bayar = allBayarUntil.filter(k => k.supplierId === s.id).reduce((a, k) => a + Number(k.jumlah || 0), 0);
     return { nama: s.nama, asal: s.asal, beli, bayar, hutang: Math.max(0, beli - bayar) };
   });
 
-  const [y, m] = bulan.split('-');
-  const namaBulan = new Date(y, m - 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+  const [y, m]    = bulan.split('-');
+  const namaBulan = new Date(Number(y), Number(m) - 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
 
-  let html = `<h2 style="margin-bottom:20px">Laporan Keuangan — ${namaBulan}</h2>`;
+  let html = `<h2 style="margin-bottom:20px;font-size:17px;font-weight:700">Laporan Keuangan — ${namaBulan}</h2>`;
 
   // 1. Arus Kas
   html += `<div class="laporan-section"><h3>1. Arus Kas</h3>`;
-  html += `<div class="laporan-row"><span>Pemasukan</span></div>`;
-  Object.entries(masukKat).forEach(([kat, val]) => {
-    html += `<div class="laporan-row" style="padding-left:16px"><span>${kat}</span><span class="text-green">${rupiah(val)}</span></div>`;
-  });
-  if (!Object.keys(masukKat).length) html += `<div class="laporan-row" style="padding-left:16px"><span>-</span><span>Rp 0</span></div>`;
+  html += `<div class="laporan-row"><span><strong>Pemasukan</strong></span></div>`;
+  if (Object.keys(masukKat).length) {
+    Object.entries(masukKat).forEach(([kat, val]) => {
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${kat}</span><span class="text-green">${rupiah(val)}</span></div>`;
+    });
+  } else {
+    html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pemasukan</span><span>Rp 0</span></div>`;
+  }
   html += `<div class="laporan-row"><span><em>Total Pemasukan</em></span><span class="text-green"><strong>${rupiah(totalMasuk)}</strong></span></div>`;
-  html += `<div class="laporan-row"><span>Pengeluaran</span></div>`;
-  Object.entries(keluarKat).forEach(([kat, val]) => {
-    html += `<div class="laporan-row" style="padding-left:16px"><span>${kat}</span><span class="text-red">${rupiah(val)}</span></div>`;
-  });
-  if (!Object.keys(keluarKat).length) html += `<div class="laporan-row" style="padding-left:16px"><span>-</span><span>Rp 0</span></div>`;
+  html += `<div class="laporan-row"><span><strong>Pengeluaran</strong></span></div>`;
+  if (Object.keys(keluarKat).length) {
+    Object.entries(keluarKat).forEach(([kat, val]) => {
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${kat}</span><span class="text-red">${rupiah(val)}</span></div>`;
+    });
+  } else {
+    html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran</span><span>Rp 0</span></div>`;
+  }
   html += `<div class="laporan-row"><span><em>Total Pengeluaran</em></span><span class="text-red"><strong>${rupiah(totalKeluar)}</strong></span></div>`;
   const saldoBulan = totalMasuk - totalKeluar;
   html += `<div class="laporan-total"><span>Saldo Bersih</span><span class="${saldoBulan >= 0 ? 'text-green' : 'text-red'}">${rupiah(saldoBulan)}</span></div>`;
@@ -396,7 +747,7 @@ function renderLaporan() {
   // 2. Pembelian Barang
   html += `<div class="laporan-section"><h3>2. Pembelian Barang Bulan Ini</h3>`;
   if (beliBulan.length) {
-    beliBulan.sort((a, b) => b.tgl.localeCompare(a.tgl)).forEach(p => {
+    [...beliBulan].sort((a, b) => String(b.tgl).localeCompare(String(a.tgl))).forEach(p => {
       html += `<div class="laporan-row"><span>${p.tgl} — ${supplierName(p.supplierId)} — ${p.jenis} (${p.qty} pcs)</span><span>${rupiah(p.total)}</span></div>`;
     });
   } else {
@@ -405,7 +756,7 @@ function renderLaporan() {
   html += `<div class="laporan-total"><span>Total Pembelian</span><span>${rupiah(totalBeli)}</span></div>`;
   html += `</div>`;
 
-  // 3. Hutang Supplier (kumulatif)
+  // 3. Posisi Hutang Kumulatif
   html += `<div class="laporan-section"><h3>3. Posisi Hutang Supplier (s/d ${namaBulan})</h3>`;
   if (hutangRows.length) {
     hutangRows.forEach(r => {
@@ -439,18 +790,143 @@ function renderLaporan() {
 
 document.getElementById('btn-generate-laporan').addEventListener('click', renderLaporan);
 
-// ─── MODAL confirm ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN — manajemen user
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderUsers() {
+  const tbody = document.getElementById('tbody-users');
+  if (!tbody) return;
+  if (!users.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Belum ada data pengguna</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  users.forEach(u => {
+    const isMe  = u.uid === currentUser?.uid;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${u.nama || '-'}</strong></td>
+      <td>${u.email}</td>
+      <td><span class="role-badge role-${u.role}">${u.role}</span></td>
+      <td>${u.active !== false
+        ? '<span class="badge badge-aktif">Aktif</span>'
+        : '<span class="badge badge-nonaktif">Nonaktif</span>'
+      }</td>
+      <td>
+        ${isMe ? '<em style="color:var(--text-muted);font-size:12px">Anda</em>' : `
+          <button class="btn-sm ${u.active !== false ? 'btn-sm-orange' : 'btn-sm-red'}"
+            data-toggle-user="${u.id}"
+            data-active="${u.active !== false ? 'true' : 'false'}">
+            ${u.active !== false ? 'Nonaktifkan' : 'Aktifkan'}
+          </button>
+        `}
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-simpan-user').addEventListener('click', async () => {
+  const nama     = document.getElementById('usr-nama').value.trim();
+  const email    = document.getElementById('usr-email').value.trim();
+  const password = document.getElementById('usr-password').value;
+  const role     = document.getElementById('usr-role').value;
+
+  if (!nama || !email || !password) { toast('Nama, email, dan password wajib diisi', 'error'); return; }
+  if (password.length < 6) { toast('Password minimal 6 karakter', 'error'); return; }
+
+  try {
+    // Gunakan secondary app agar admin tidak ter-logout
+    const secAuth = getSecondaryAuth();
+    const cred    = await createUserWithEmailAndPassword(secAuth, email, password);
+    await setDoc(doc(db, 'users', cred.user.uid), {
+      uid: cred.user.uid, nama, email, role, active: true,
+      createdAt: serverTimestamp(),
+    });
+    // Logout dari secondary app (supaya bersih)
+    await signOut(secAuth);
+
+    ['usr-nama', 'usr-email', 'usr-password'].forEach(id => { document.getElementById(id).value = ''; });
+    toast(`Pengguna ${nama} berhasil dibuat`);
+  } catch (e) {
+    toast('Gagal membuat user: ' + friendlyError(e.code), 'error');
+  }
+});
+
+document.getElementById('tbody-users').addEventListener('click', async e => {
+  const id = e.target.dataset.toggleUser;
+  if (!id) return;
+  const isActive = e.target.dataset.active === 'true';
+  const action   = isActive ? 'Nonaktifkan' : 'Aktifkan';
+  const u = users.find(x => x.id === id);
+  confirmDelete(`${action} pengguna <strong>${u?.nama || ''}</strong>?`, async () => {
+    try {
+      await updateDoc(doc(db, 'users', id), { active: !isActive });
+      toast(`Pengguna berhasil di${isActive ? 'nonaktifkan' : 'aktifkan'}`);
+    } catch (err) {
+      toast('Gagal memperbarui: ' + err.message, 'error');
+    }
+  }, action);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GANTI PASSWORD (reauthenticate + updatePassword)
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('btn-ganti-password').addEventListener('click', () => {
+  document.getElementById('pw-lama').value = '';
+  document.getElementById('pw-baru').value = '';
+  document.getElementById('pw-konfirmasi').value = '';
+  document.getElementById('pw-error').classList.add('hidden');
+  document.getElementById('modal-password').classList.remove('hidden');
+});
+
+['btn-pw-close', 'btn-pw-cancel'].forEach(id => {
+  document.getElementById(id).addEventListener('click', () => {
+    document.getElementById('modal-password').classList.add('hidden');
+  });
+});
+
+document.getElementById('btn-pw-simpan').addEventListener('click', async () => {
+  const lama      = document.getElementById('pw-lama').value;
+  const baru      = document.getElementById('pw-baru').value;
+  const konfirmasi = document.getElementById('pw-konfirmasi').value;
+  const errEl     = document.getElementById('pw-error');
+
+  errEl.classList.add('hidden');
+  if (!lama || !baru || !konfirmasi) { errEl.textContent = 'Semua field wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (baru.length < 6) { errEl.textContent = 'Password baru minimal 6 karakter.'; errEl.classList.remove('hidden'); return; }
+  if (baru !== konfirmasi) { errEl.textContent = 'Konfirmasi password tidak cocok.'; errEl.classList.remove('hidden'); return; }
+
+  try {
+    const credential = EmailAuthProvider.credential(currentUser.email, lama);
+    await reauthenticateWithCredential(currentUser, credential);
+    await updatePassword(currentUser, baru);
+    document.getElementById('modal-password').classList.add('hidden');
+    toast('Password berhasil diubah');
+  } catch (e) {
+    errEl.textContent = friendlyError(e.code);
+    errEl.classList.remove('hidden');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL KONFIRMASI (multi-purpose: hapus / toggle)
+// ═══════════════════════════════════════════════════════════════════════════════
 let _confirmCb = null;
-function confirmDelete(msg, cb) {
+
+function confirmDelete(msg, cb, confirmLabel = 'Hapus') {
   document.getElementById('modal-body').innerHTML = msg;
+  document.getElementById('btn-modal-confirm').textContent = confirmLabel;
   document.getElementById('modal-overlay').classList.remove('hidden');
   _confirmCb = cb;
 }
+
 document.getElementById('btn-modal-confirm').addEventListener('click', () => {
   if (_confirmCb) _confirmCb();
   document.getElementById('modal-overlay').classList.add('hidden');
   _confirmCb = null;
 });
+
 ['btn-modal-cancel', 'btn-modal-close'].forEach(id => {
   document.getElementById(id).addEventListener('click', () => {
     document.getElementById('modal-overlay').classList.add('hidden');
@@ -458,53 +934,26 @@ document.getElementById('btn-modal-confirm').addEventListener('click', () => {
   });
 });
 
-// ─── EXPORT / IMPORT ─────────────────────────────────────────────────────────
-document.getElementById('btn-export').addEventListener('click', () => {
-  const data = { suppliers, pembelian, kasir, exportedAt: new Date().toISOString() };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  const tgl  = new Date().toISOString().slice(0, 10);
-  a.href = url;
-  a.download = `laporan-keuangan-${tgl}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast('Data berhasil di-export');
-});
-
-document.getElementById('input-import').addEventListener('change', function () {
-  const file = this.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const data = JSON.parse(e.target.result);
-      if (!data.suppliers || !data.pembelian || !data.kasir) throw new Error('Format tidak valid');
-      suppliers = data.suppliers;
-      pembelian = data.pembelian;
-      kasir     = data.kasir;
-      save('suppliers', suppliers);
-      save('pembelian', pembelian);
-      save('kasir', kasir);
-      populateSupplierSelects();
-      renderDashboard();
-      renderSupplier();
-      renderPembelian();
-      renderKasir();
-      toast('Data berhasil di-import');
-    } catch {
-      toast('File tidak valid atau rusak', 'error');
-    }
-    this.value = '';
+// ═══════════════════════════════════════════════════════════════════════════════
+// Friendly error messages
+// ═══════════════════════════════════════════════════════════════════════════════
+function friendlyError(code) {
+  const map = {
+    'auth/invalid-email':             'Format email tidak valid.',
+    'auth/user-not-found':            'Email tidak terdaftar.',
+    'auth/wrong-password':            'Password salah.',
+    'auth/invalid-credential':        'Email atau password salah.',
+    'auth/email-already-in-use':      'Email sudah digunakan.',
+    'auth/weak-password':             'Password terlalu lemah. Minimal 6 karakter.',
+    'auth/too-many-requests':         'Terlalu banyak percobaan. Coba lagi nanti.',
+    'auth/network-request-failed':    'Koneksi gagal. Periksa internet Anda.',
+    'auth/requires-recent-login':     'Sesi expired. Silakan login ulang.',
   };
-  reader.readAsText(file);
-});
+  return map[code] || 'Terjadi kesalahan. Silakan coba lagi.';
+}
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Init default dates
+// ═══════════════════════════════════════════════════════════════════════════════
 document.getElementById('beli-tgl').value = today();
 document.getElementById('kas-tgl').value  = today();
-populateSupplierSelects();
-renderDashboard();
-renderSupplier();
-renderPembelian();
-renderKasir();

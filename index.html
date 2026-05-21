@@ -9,6 +9,13 @@
 <body>
 
   <!-- ═══════════════════════════════════════════════════════
+       GLOBAL LOADING (ditampilkan saat cek auth awal)
+  ═══════════════════════════════════════════════════════ -->
+  <div id="global-loading" class="global-loading">
+    <div class="spinner spinner-lg"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
        LOGIN PAGE
   ═══════════════════════════════════════════════════════ -->
   <div id="login-screen" class="login-screen hidden">
@@ -36,7 +43,7 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════
-       FIRST-RUN SETUP (jika users kosong)
+       FIRST-RUN SETUP (jika collection users kosong)
   ═══════════════════════════════════════════════════════ -->
   <div id="setup-screen" class="login-screen hidden">
     <div class="login-card">
@@ -58,7 +65,7 @@
         <label>Password</label>
         <input type="password" id="setup-password" placeholder="Min. 6 karakter" />
       </div>
-      <button class="btn-primary btn-block" id="btn-setup">Buat Admin & Mulai</button>
+      <button class="btn-primary btn-block" id="btn-setup">Buat Admin &amp; Mulai</button>
       <div id="setup-loading" class="login-loading hidden">
         <div class="spinner"></div>
         <span>Membuat akun…</span>
@@ -148,7 +155,7 @@
       <!-- ─── PEMBELIAN ──────────────────────────────────── -->
       <section id="page-pembelian" class="page">
         <h2 class="page-title">Pembelian Barang</h2>
-        <div class="form-card action-form">
+        <div class="form-card action-form" id="form-pembelian-wrap">
           <h3>Tambah Pembelian</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -213,7 +220,7 @@
                 <th>Total</th>
                 <th>Cara Bayar</th>
                 <th>Keterangan</th>
-                <th class="col-aksi">Aksi</th>
+                <th class="col-aksi col-aksi-pembelian">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-pembelian"></tbody>
@@ -231,7 +238,7 @@
       <!-- ─── KASIR ──────────────────────────────────────── -->
       <section id="page-kasir" class="page">
         <h2 class="page-title">Pemasukan &amp; Pengeluaran (Kasir)</h2>
-        <div class="form-card action-form">
+        <div class="form-card action-form" id="form-kasir-wrap">
           <h3>Tambah Transaksi</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -293,7 +300,7 @@
                 <th>Supplier</th>
                 <th>Jumlah</th>
                 <th>Keterangan</th>
-                <th class="col-aksi">Aksi</th>
+                <th class="col-aksi col-aksi-kasir">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-kasir"></tbody>
@@ -321,7 +328,7 @@
       <!-- ─── SUPPLIER & HUTANG ──────────────────────────── -->
       <section id="page-supplier" class="page">
         <h2 class="page-title">Supplier &amp; Hutang</h2>
-        <div class="form-card action-form">
+        <div class="form-card action-form" id="form-supplier-wrap">
           <h3>Tambah Supplier</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -365,7 +372,7 @@
                 <th>Total Bayar</th>
                 <th>Sisa Hutang</th>
                 <th>Status</th>
-                <th class="col-aksi">Aksi</th>
+                <th class="col-aksi col-aksi-supplier">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-supplier"></tbody>
@@ -439,7 +446,7 @@
   </div><!-- /#app -->
 
   <!-- ═══════════════════════════════════════════════════════
-       MODAL KONFIRMASI
+       MODAL KONFIRMASI HAPUS
   ═══════════════════════════════════════════════════════ -->
   <div id="modal-overlay" class="modal-overlay hidden">
     <div class="modal">
@@ -468,15 +475,15 @@
         <div id="pw-error" class="login-error hidden" style="margin-bottom:12px"></div>
         <div class="form-group" style="margin-bottom:12px">
           <label>Password Lama</label>
-          <input type="password" id="pw-lama" placeholder="Password saat ini" />
+          <input type="password" id="pw-lama" placeholder="Password saat ini" autocomplete="current-password" />
         </div>
         <div class="form-group" style="margin-bottom:12px">
           <label>Password Baru</label>
-          <input type="password" id="pw-baru" placeholder="Min. 6 karakter" />
+          <input type="password" id="pw-baru" placeholder="Min. 6 karakter" autocomplete="new-password" />
         </div>
         <div class="form-group">
           <label>Konfirmasi Password Baru</label>
-          <input type="password" id="pw-konfirmasi" placeholder="Ulangi password baru" />
+          <input type="password" id="pw-konfirmasi" placeholder="Ulangi password baru" autocomplete="new-password" />
         </div>
       </div>
       <div class="modal-footer">
@@ -488,11 +495,6 @@
 
   <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
-
-  <!-- LOADING GLOBAL -->
-  <div id="global-loading" class="global-loading">
-    <div class="spinner spinner-lg"></div>
-  </div>
 
   <script type="module" src="app.js"></script>
 </body>
