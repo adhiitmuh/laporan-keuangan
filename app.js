@@ -19,6 +19,7 @@ import {
   doc,
   addDoc,
   setDoc,
+  getDoc,
   updateDoc,
   deleteDoc,
   getDocs,
@@ -162,11 +163,11 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// First-run check: apakah collection users kosong?
+// First-run check: baca dokumen meta/config (publicly readable)
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkFirstRun() {
-  const snap = await getDocs(collection(db, 'users'));
-  return snap.empty;
+  const snap = await getDoc(doc(db, 'meta', 'config'));
+  return !snap.exists() || snap.data()?.initialized !== true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -192,6 +193,7 @@ document.getElementById('btn-setup').addEventListener('click', async () => {
       uid: cred.user.uid, nama, email, role: 'admin', active: true,
       createdAt: serverTimestamp(),
     });
+    await setDoc(doc(db, 'meta', 'config'), { initialized: true });
     // onAuthStateChanged akan handle selanjutnya
   } catch (e) {
     errEl.textContent = friendlyError(e.code);
