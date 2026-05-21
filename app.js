@@ -69,6 +69,7 @@ let kasirData       = [];
 let users           = [];
 let poData          = [];
 let rekening        = [];
+let anggaranData    = [];  // anggaran non-PO
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
 
@@ -133,7 +134,7 @@ function applyRoleUI(role) {
 
   // Hide action forms for pengawas (read-only)
   const isReadOnly = role === 'pengawas';
-  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap'].forEach(id => {
+  ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap', 'form-anggaran-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
   });
@@ -408,6 +409,13 @@ function startListeners() {
     renderDashboard();
   }));
 
+  // anggaran lainnya
+  unsubs.push(onSnapshot(query(collection(db, 'anggaran'), orderBy('createdAt', 'desc')), snap => {
+    anggaranData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderAnggaran();
+    renderDashboard();
+  }));
+
   // settings (saldo awal)
   unsubs.push(onSnapshot(doc(db, 'settings', 'saldo-awal'), snap => {
     const d = snap.data() || {};
@@ -499,7 +507,11 @@ function renderDashboard() {
   const totalPOAktif = poData
     .filter(p => p.status === 'pending' || p.status === 'dikirim')
     .reduce((a, p) => a + Number(p.totalNilai || 0), 0);
-  const perluDisiapkan = Math.max(0, totalPOAktif - saldo);
+  const totalAnggaranLain = anggaranData
+    .filter(a => a.status !== 'selesai' && a.status !== 'dibatalkan')
+    .reduce((a, x) => a + Number(x.target || 0), 0);
+  const totalKebutuhan  = totalPOAktif + totalAnggaranLain;
+  const perluDisiapkan  = Math.max(0, totalKebutuhan - saldo);
 
   setEl('dash-pemasukan',      rupiah(totalMasuk));
   setEl('dash-pengeluaran',    rupiah(totalKeluar));
@@ -512,8 +524,9 @@ function renderDashboard() {
   const perluCard = document.getElementById('dash-perlu-card');
   if (perluCard) perluCard.className = 'card ' + (perluDisiapkan > 0 ? 'card-red' : 'card-green');
 
-  setEl('bw-po-aktif', rupiah(totalPOAktif));
-  setEl('bw-saldo',    rupiah(saldo));
+  setEl('bw-po-aktif',       rupiah(totalPOAktif));
+  setEl('bw-anggaran-lain',  rupiah(totalAnggaranLain));
+  setEl('bw-saldo',          rupiah(saldo));
   const bwPerlu = document.getElementById('bw-perlu');
   if (bwPerlu) {
     bwPerlu.textContent = rupiah(perluDisiapkan);
@@ -1462,6 +1475,97 @@ document.getElementById('btn-filter-po').addEventListener('click', () => {
     status:     document.getElementById('filter-po-status').value,
     bulan:      document.getElementById('filter-po-bulan').value,
     supplierId: document.getElementById('filter-po-supplier').value,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ANGGARAN LAINNYA
+// ═══════════════════════════════════════════════════════════════════════════════
+const ANGGARAN_STATUS = {
+  rencana:    { label: '📝 Rencana',    badge: 'badge-approval-wait' },
+  disetujui:  { label: '✓ Disetujui',  badge: 'badge-approval-ok'   },
+  selesai:    { label: '✔ Selesai',    badge: 'badge-lunas'          },
+  dibatalkan: { label: '✗ Dibatalkan', badge: 'badge-po-dibatalkan'  },
+};
+
+function renderAnggaran() {
+  const tbody = document.getElementById('tbody-anggaran');
+  if (!tbody) return;
+  if (!anggaranData.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">Belum ada rencana anggaran</td></tr>';
+    return;
+  }
+  const isReadOnly = currentRole === 'pengawas' || currentRole === 'kasir';
+  tbody.innerHTML = '';
+  anggaranData.forEach(a => {
+    const st  = ANGGARAN_STATUS[a.status] || ANGGARAN_STATUS.rencana;
+    const tr  = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${a.nama}</strong></td>
+      <td>${a.kategori || '–'}</td>
+      <td><strong>${rupiah(a.target || 0)}</strong></td>
+      <td>${a.tgl || '–'}</td>
+      <td><span class="badge ${st.badge}">${st.label}</span></td>
+      <td>${a.ket || '–'}</td>
+      <td style="${isReadOnly ? 'display:none' : ''}">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${a.status !== 'selesai' && a.status !== 'dibatalkan' ? `
+            <select class="ang-status-select" data-ang-id="${a.id}" style="border:1.5px solid var(--gray-border);border-radius:6px;padding:3px 6px;font-size:12px;background:var(--gray-light)">
+              <option value="rencana"    ${a.status === 'rencana'   ? 'selected' : ''}>Rencana</option>
+              <option value="disetujui"  ${a.status === 'disetujui' ? 'selected' : ''}>Disetujui</option>
+              <option value="selesai"    >Selesai</option>
+              <option value="dibatalkan" >Batalkan</option>
+            </select>` : ''}
+          <button class="btn-sm btn-sm-red" data-del-ang="${a.id}">Hapus</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Event: ubah status langsung dari dropdown
+  tbody.querySelectorAll('.ang-status-select').forEach(sel => {
+    sel.addEventListener('change', async function () {
+      try {
+        await updateDoc(doc(db, 'anggaran', this.dataset.angId), { status: this.value });
+        toast('Status anggaran diperbarui ✓');
+      } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+    });
+  });
+}
+
+document.getElementById('btn-simpan-ang').addEventListener('click', async () => {
+  const nama   = document.getElementById('ang-nama').value.trim();
+  const target = Number(document.getElementById('ang-target').value) || 0;
+  if (!nama)   { toast('Nama anggaran wajib diisi', 'error'); return; }
+  if (!target) { toast('Target dana wajib diisi', 'error'); return; }
+  try {
+    await addDoc(collection(db, 'anggaran'), {
+      nama,
+      kategori: document.getElementById('ang-kategori').value,
+      target,
+      tgl:    document.getElementById('ang-tgl').value,
+      ket:    document.getElementById('ang-ket').value.trim(),
+      status: 'rencana',
+      createdAt: serverTimestamp(),
+    });
+    ['ang-nama', 'ang-target', 'ang-tgl', 'ang-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    toast('Rencana anggaran disimpan ✓');
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  }
+});
+
+document.getElementById('tbody-anggaran').addEventListener('click', e => {
+  const delId = e.target.dataset.delAng;
+  if (!delId) return;
+  confirmDelete('Hapus rencana anggaran ini?', async () => {
+    try {
+      await deleteDoc(doc(db, 'anggaran', delId));
+      toast('Anggaran dihapus');
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
   });
 });
 

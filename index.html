@@ -439,8 +439,13 @@
           </div>
           <div class="budget-divider"></div>
           <div class="budget-widget-item">
+            <div class="budget-widget-label">Anggaran Lainnya</div>
+            <div class="budget-widget-value text-purple" id="bw-anggaran-lain">Rp 0</div>
+          </div>
+          <div class="budget-divider"></div>
+          <div class="budget-widget-item">
             <div class="budget-widget-label">Saldo Kas</div>
-            <div class="budget-widget-value text-blue" id="bw-saldo">Rp 0</div>
+            <div class="budget-widget-value text-green" id="bw-saldo">Rp 0</div>
           </div>
           <div class="budget-divider"></div>
           <div class="budget-widget-item">
@@ -547,6 +552,59 @@
               </tr>
             </thead>
             <tbody id="tbody-po"></tbody>
+          </table>
+        </div>
+
+        <!-- ─── ANGGARAN LAINNYA ─── -->
+        <h3 class="section-title" style="margin-top:32px">Anggaran Lainnya</h3>
+
+        <div class="form-card action-form" id="form-anggaran-wrap">
+          <h3>Tambah Rencana Anggaran</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nama Anggaran</label>
+              <input type="text" id="ang-nama" placeholder="cth: Trip Tahunan, Renovasi, Event" />
+            </div>
+            <div class="form-group">
+              <label>Kategori</label>
+              <select id="ang-kategori">
+                <option value="Perjalanan">✈️ Perjalanan</option>
+                <option value="Event">🎉 Event / Acara</option>
+                <option value="Operasional">🏢 Operasional</option>
+                <option value="Peralatan">🔧 Peralatan</option>
+                <option value="Lainnya">📌 Lainnya</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Target Dana (Rp)</label>
+              <input type="number" id="ang-target" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Tanggal Rencana</label>
+              <input type="date" id="ang-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="ang-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-ang">Simpan Anggaran</button>
+        </div>
+
+        <div class="table-wrap" style="margin-top:12px">
+          <table>
+            <thead>
+              <tr>
+                <th>Nama Anggaran</th>
+                <th>Kategori</th>
+                <th>Target Dana</th>
+                <th>Tanggal Rencana</th>
+                <th>Status</th>
+                <th>Keterangan</th>
+                <th class="col-aksi">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-anggaran"></tbody>
           </table>
         </div>
       </section>
