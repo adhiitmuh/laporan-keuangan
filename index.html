@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Laporan Keuangan Toko</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="brand-icon">🏪</span>
+        <span class="brand-name">Laporan Keuangan Toko</span>
+      </div>
+      <nav class="topbar-nav">
+        <button class="nav-btn active" data-page="dashboard">Dashboard</button>
+        <button class="nav-btn" data-page="pembelian">Pembelian</button>
+        <button class="nav-btn" data-page="kasir">Kasir</button>
+        <button class="nav-btn" data-page="supplier">Supplier & Hutang</button>
+        <button class="nav-btn" data-page="laporan">Laporan</button>
+      </nav>
+    </header>
+
+    <main class="content">
+      <!-- DASHBOARD -->
+      <section id="page-dashboard" class="page active">
+        <h2 class="page-title">Dashboard Posisi Keuangan</h2>
+        <div class="card-grid">
+          <div class="card card-green">
+            <div class="card-label">Total Pemasukan</div>
+            <div class="card-value" id="dash-pemasukan">Rp 0</div>
+          </div>
+          <div class="card card-red">
+            <div class="card-label">Total Pengeluaran</div>
+            <div class="card-value" id="dash-pengeluaran">Rp 0</div>
+          </div>
+          <div class="card card-blue">
+            <div class="card-label">Saldo Kas</div>
+            <div class="card-value" id="dash-saldo">Rp 0</div>
+          </div>
+          <div class="card card-orange">
+            <div class="card-label">Total Hutang Supplier</div>
+            <div class="card-value" id="dash-hutang">Rp 0</div>
+          </div>
+          <div class="card card-purple">
+            <div class="card-label">Total Pembelian Barang</div>
+            <div class="card-value" id="dash-pembelian">Rp 0</div>
+          </div>
+          <div class="card card-teal">
+            <div class="card-label">Total Bayar ke Supplier</div>
+            <div class="card-value" id="dash-bayar-supplier">Rp 0</div>
+          </div>
+        </div>
+
+        <h3 class="section-title">Ringkasan Hutang per Supplier</h3>
+        <div class="table-wrap">
+          <table id="tbl-hutang-summary">
+            <thead>
+              <tr>
+                <th>Supplier</th>
+                <th>Asal</th>
+                <th>Total Pembelian</th>
+                <th>Total Bayar</th>
+                <th>Sisa Hutang</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-hutang-summary"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PEMBELIAN -->
+      <section id="page-pembelian" class="page">
+        <h2 class="page-title">Pembelian Barang (Pengurus)</h2>
+        <div class="form-card">
+          <h3>Tambah Pembelian</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal</label>
+              <input type="date" id="beli-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Supplier</label>
+              <select id="beli-supplier">
+                <option value="">-- Pilih Supplier --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Jenis Barang</label>
+              <input type="text" id="beli-jenis" placeholder="cth: Kain Batik, Baju, dll" />
+            </div>
+            <div class="form-group">
+              <label>Jumlah / Qty</label>
+              <input type="number" id="beli-qty" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Harga Satuan (Rp)</label>
+              <input type="number" id="beli-harga" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Total (otomatis)</label>
+              <input type="text" id="beli-total" readonly placeholder="Rp 0" />
+            </div>
+            <div class="form-group">
+              <label>Cara Bayar</label>
+              <select id="beli-carabayar">
+                <option value="hutang">Hutang</option>
+                <option value="tunai">Tunai</option>
+                <option value="transfer">Transfer</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="beli-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-beli">Simpan Pembelian</button>
+        </div>
+
+        <h3 class="section-title">Riwayat Pembelian</h3>
+        <div class="filter-bar">
+          <input type="month" id="filter-beli-bulan" />
+          <select id="filter-beli-supplier">
+            <option value="">Semua Supplier</option>
+          </select>
+          <button class="btn-outline" id="btn-filter-beli">Filter</button>
+        </div>
+        <div class="table-wrap">
+          <table id="tbl-pembelian">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Supplier</th>
+                <th>Jenis Barang</th>
+                <th>Qty</th>
+                <th>Harga Satuan</th>
+                <th>Total</th>
+                <th>Cara Bayar</th>
+                <th>Keterangan</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-pembelian"></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="5" class="tfoot-label">TOTAL</td>
+                <td id="tfoot-pembelian-total" class="tfoot-value"></td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <!-- KASIR -->
+      <section id="page-kasir" class="page">
+        <h2 class="page-title">Pemasukan & Pengeluaran (Kasir)</h2>
+        <div class="form-card">
+          <h3>Tambah Transaksi</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal</label>
+              <input type="date" id="kas-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Jenis</label>
+              <select id="kas-jenis">
+                <option value="pemasukan">Pemasukan</option>
+                <option value="pengeluaran">Pengeluaran</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Kategori</label>
+              <select id="kas-kategori">
+                <option value="penjualan">Penjualan</option>
+                <option value="bayar-supplier">Bayar Supplier</option>
+                <option value="gaji">Gaji Karyawan</option>
+                <option value="operasional">Operasional</option>
+                <option value="lainnya">Lainnya</option>
+              </select>
+            </div>
+            <div class="form-group" id="kas-supplier-wrap" style="display:none">
+              <label>Supplier (jika bayar hutang)</label>
+              <select id="kas-supplier">
+                <option value="">-- Pilih Supplier --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Jumlah (Rp)</label>
+              <input type="number" id="kas-jumlah" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="kas-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-kas">Simpan Transaksi</button>
+        </div>
+
+        <h3 class="section-title">Riwayat Transaksi Kas</h3>
+        <div class="filter-bar">
+          <input type="month" id="filter-kas-bulan" />
+          <select id="filter-kas-jenis">
+            <option value="">Semua Jenis</option>
+            <option value="pemasukan">Pemasukan</option>
+            <option value="pengeluaran">Pengeluaran</option>
+          </select>
+          <button class="btn-outline" id="btn-filter-kas">Filter</button>
+        </div>
+        <div class="table-wrap">
+          <table id="tbl-kasir">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Jenis</th>
+                <th>Kategori</th>
+                <th>Supplier</th>
+                <th>Jumlah</th>
+                <th>Keterangan</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-kasir"></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4" class="tfoot-label">Pemasukan</td>
+                <td id="tfoot-kas-masuk" class="tfoot-value text-green"></td>
+                <td colspan="2"></td>
+              </tr>
+              <tr>
+                <td colspan="4" class="tfoot-label">Pengeluaran</td>
+                <td id="tfoot-kas-keluar" class="tfoot-value text-red"></td>
+                <td colspan="2"></td>
+              </tr>
+              <tr>
+                <td colspan="4" class="tfoot-label">Saldo</td>
+                <td id="tfoot-kas-saldo" class="tfoot-value text-blue"></td>
+                <td colspan="2"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <!-- SUPPLIER & HUTANG -->
+      <section id="page-supplier" class="page">
+        <h2 class="page-title">Supplier & Hutang</h2>
+        <div class="form-card">
+          <h3>Tambah Supplier</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nama Supplier</label>
+              <input type="text" id="sup-nama" placeholder="cth: Pak Hendra" />
+            </div>
+            <div class="form-group">
+              <label>Asal</label>
+              <select id="sup-asal">
+                <option value="Jawa">Jawa</option>
+                <option value="Lokal">Lokal</option>
+                <option value="Lainnya">Lainnya</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Jenis Barang</label>
+              <input type="text" id="sup-jenis" placeholder="cth: Kain, Baju, Aksesoris" />
+            </div>
+            <div class="form-group">
+              <label>No. HP / Kontak</label>
+              <input type="text" id="sup-hp" placeholder="Opsional" />
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="sup-ket" placeholder="Opsional" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-sup">Simpan Supplier</button>
+        </div>
+
+        <h3 class="section-title">Daftar Supplier & Posisi Hutang</h3>
+        <div class="table-wrap">
+          <table id="tbl-supplier">
+            <thead>
+              <tr>
+                <th>Nama</th>
+                <th>Asal</th>
+                <th>Jenis Barang</th>
+                <th>No. HP</th>
+                <th>Total Pembelian</th>
+                <th>Total Bayar</th>
+                <th>Sisa Hutang</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-supplier"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- LAPORAN -->
+      <section id="page-laporan" class="page">
+        <h2 class="page-title">Laporan Bulanan</h2>
+        <div class="filter-bar">
+          <label>Pilih Bulan:</label>
+          <input type="month" id="filter-laporan-bulan" />
+          <button class="btn-primary" id="btn-generate-laporan">Tampilkan Laporan</button>
+        </div>
+
+        <div id="laporan-output" class="laporan-box">
+          <p class="empty-note">Pilih bulan dan klik "Tampilkan Laporan"</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span id="modal-title">Konfirmasi</span>
+        <button class="modal-close" id="btn-modal-close">&times;</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="btn-modal-cancel">Batal</button>
+        <button class="btn-danger" id="btn-modal-confirm">Hapus</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
