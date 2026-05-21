@@ -7,27 +7,97 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="app">
+
+  <!-- ═══════════════════════════════════════════════════════
+       LOGIN PAGE
+  ═══════════════════════════════════════════════════════ -->
+  <div id="login-screen" class="login-screen hidden">
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="brand-icon">🏪</span>
+        <h1>Laporan Keuangan Toko</h1>
+      </div>
+      <p class="login-subtitle">Masuk dengan akun Anda</p>
+      <div id="login-error" class="login-error hidden"></div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="email@toko.com" autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+      <button class="btn-primary btn-block" id="btn-login">Masuk</button>
+      <div id="login-loading" class="login-loading hidden">
+        <div class="spinner"></div>
+        <span>Sedang masuk…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       FIRST-RUN SETUP (jika users kosong)
+  ═══════════════════════════════════════════════════════ -->
+  <div id="setup-screen" class="login-screen hidden">
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="brand-icon">🏪</span>
+        <h1>Setup Pertama</h1>
+      </div>
+      <p class="login-subtitle">Buat akun Admin pertama untuk memulai</p>
+      <div id="setup-error" class="login-error hidden"></div>
+      <div class="form-group">
+        <label>Nama Admin</label>
+        <input type="text" id="setup-nama" placeholder="Nama lengkap" />
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="setup-email" placeholder="admin@toko.com" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="setup-password" placeholder="Min. 6 karakter" />
+      </div>
+      <button class="btn-primary btn-block" id="btn-setup">Buat Admin & Mulai</button>
+      <div id="setup-loading" class="login-loading hidden">
+        <div class="spinner"></div>
+        <span>Membuat akun…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       APP (setelah login)
+  ═══════════════════════════════════════════════════════ -->
+  <div id="app" class="app hidden">
+
+    <!-- TOPBAR -->
     <header class="topbar">
       <div class="topbar-brand">
         <span class="brand-icon">🏪</span>
         <span class="brand-name">Laporan Keuangan Toko</span>
       </div>
-      <nav class="topbar-nav">
+      <nav class="topbar-nav" id="topbar-nav">
         <button class="nav-btn active" data-page="dashboard">Dashboard</button>
-        <button class="nav-btn" data-page="pembelian">Pembelian</button>
-        <button class="nav-btn" data-page="kasir">Kasir</button>
-        <button class="nav-btn" data-page="supplier">Supplier & Hutang</button>
-        <button class="nav-btn" data-page="laporan">Laporan</button>
+        <button class="nav-btn nav-pembelian" data-page="pembelian">Pembelian</button>
+        <button class="nav-btn nav-kasir" data-page="kasir">Kasir</button>
+        <button class="nav-btn nav-supplier" data-page="supplier">Supplier &amp; Hutang</button>
+        <button class="nav-btn nav-laporan" data-page="laporan">Laporan</button>
+        <button class="nav-btn nav-admin" data-page="admin">Admin</button>
       </nav>
       <div class="topbar-actions">
-        <button class="btn-outline btn-sm-topbar" id="btn-export">⬇ Export Data</button>
-        <label class="btn-outline btn-sm-topbar" id="label-import">⬆ Import Data<input type="file" id="input-import" accept=".json" style="display:none"/></label>
+        <div class="user-info">
+          <span id="user-name" class="user-name"></span>
+          <span id="user-role-badge" class="role-badge"></span>
+        </div>
+        <button class="btn-outline btn-sm-topbar" id="btn-ganti-password">Ganti Password</button>
+        <button class="btn-outline btn-sm-topbar btn-logout" id="btn-logout">Logout</button>
       </div>
     </header>
 
     <main class="content">
-      <!-- DASHBOARD -->
+
+      <!-- ─── DASHBOARD ─────────────────────────────────── -->
       <section id="page-dashboard" class="page active">
         <h2 class="page-title">Dashboard Posisi Keuangan</h2>
         <div class="card-grid">
@@ -75,10 +145,10 @@
         </div>
       </section>
 
-      <!-- PEMBELIAN -->
+      <!-- ─── PEMBELIAN ──────────────────────────────────── -->
       <section id="page-pembelian" class="page">
-        <h2 class="page-title">Pembelian Barang (Pengurus)</h2>
-        <div class="form-card">
+        <h2 class="page-title">Pembelian Barang</h2>
+        <div class="form-card action-form">
           <h3>Tambah Pembelian</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -143,7 +213,7 @@
                 <th>Total</th>
                 <th>Cara Bayar</th>
                 <th>Keterangan</th>
-                <th>Aksi</th>
+                <th class="col-aksi">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-pembelian"></tbody>
@@ -158,10 +228,10 @@
         </div>
       </section>
 
-      <!-- KASIR -->
+      <!-- ─── KASIR ──────────────────────────────────────── -->
       <section id="page-kasir" class="page">
-        <h2 class="page-title">Pemasukan & Pengeluaran (Kasir)</h2>
-        <div class="form-card">
+        <h2 class="page-title">Pemasukan &amp; Pengeluaran (Kasir)</h2>
+        <div class="form-card action-form">
           <h3>Tambah Transaksi</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -223,7 +293,7 @@
                 <th>Supplier</th>
                 <th>Jumlah</th>
                 <th>Keterangan</th>
-                <th>Aksi</th>
+                <th class="col-aksi">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-kasir"></tbody>
@@ -248,10 +318,10 @@
         </div>
       </section>
 
-      <!-- SUPPLIER & HUTANG -->
+      <!-- ─── SUPPLIER & HUTANG ──────────────────────────── -->
       <section id="page-supplier" class="page">
-        <h2 class="page-title">Supplier & Hutang</h2>
-        <div class="form-card">
+        <h2 class="page-title">Supplier &amp; Hutang</h2>
+        <div class="form-card action-form">
           <h3>Tambah Supplier</h3>
           <div class="form-grid">
             <div class="form-group">
@@ -282,7 +352,7 @@
           <button class="btn-primary" id="btn-simpan-sup">Simpan Supplier</button>
         </div>
 
-        <h3 class="section-title">Daftar Supplier & Posisi Hutang</h3>
+        <h3 class="section-title">Daftar Supplier &amp; Posisi Hutang</h3>
         <div class="table-wrap">
           <table id="tbl-supplier">
             <thead>
@@ -295,7 +365,7 @@
                 <th>Total Bayar</th>
                 <th>Sisa Hutang</th>
                 <th>Status</th>
-                <th>Aksi</th>
+                <th class="col-aksi">Aksi</th>
               </tr>
             </thead>
             <tbody id="tbody-supplier"></tbody>
@@ -303,7 +373,7 @@
         </div>
       </section>
 
-      <!-- LAPORAN -->
+      <!-- ─── LAPORAN ────────────────────────────────────── -->
       <section id="page-laporan" class="page">
         <h2 class="page-title">Laporan Bulanan</h2>
         <div class="filter-bar">
@@ -316,9 +386,61 @@
           <p class="empty-note">Pilih bulan dan klik "Tampilkan Laporan"</p>
         </div>
       </section>
-    </main>
-  </div>
 
+      <!-- ─── ADMIN ──────────────────────────────────────── -->
+      <section id="page-admin" class="page">
+        <h2 class="page-title">Manajemen Pengguna</h2>
+        <div class="form-card">
+          <h3>Buat Pengguna Baru</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nama Lengkap</label>
+              <input type="text" id="usr-nama" placeholder="Nama pengguna" />
+            </div>
+            <div class="form-group">
+              <label>Email</label>
+              <input type="email" id="usr-email" placeholder="email@toko.com" />
+            </div>
+            <div class="form-group">
+              <label>Password</label>
+              <input type="password" id="usr-password" placeholder="Min. 6 karakter" />
+            </div>
+            <div class="form-group">
+              <label>Role</label>
+              <select id="usr-role">
+                <option value="kasir">Kasir</option>
+                <option value="pengurus">Pengurus</option>
+                <option value="pengawas">Pengawas</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-user">Buat Pengguna</button>
+        </div>
+
+        <h3 class="section-title">Daftar Pengguna</h3>
+        <div class="table-wrap">
+          <table id="tbl-users">
+            <thead>
+              <tr>
+                <th>Nama</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-users"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div><!-- /#app -->
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL KONFIRMASI
+  ═══════════════════════════════════════════════════════ -->
   <div id="modal-overlay" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-header">
@@ -333,8 +455,45 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL GANTI PASSWORD
+  ═══════════════════════════════════════════════════════ -->
+  <div id="modal-password" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Ganti Password</span>
+        <button class="modal-close" id="btn-pw-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="pw-error" class="login-error hidden" style="margin-bottom:12px"></div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Password Lama</label>
+          <input type="password" id="pw-lama" placeholder="Password saat ini" />
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Password Baru</label>
+          <input type="password" id="pw-baru" placeholder="Min. 6 karakter" />
+        </div>
+        <div class="form-group">
+          <label>Konfirmasi Password Baru</label>
+          <input type="password" id="pw-konfirmasi" placeholder="Ulangi password baru" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="btn-pw-cancel">Batal</button>
+        <button class="btn-primary" id="btn-pw-simpan">Simpan Password</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js"></script>
+  <!-- LOADING GLOBAL -->
+  <div id="global-loading" class="global-loading">
+    <div class="spinner spinner-lg"></div>
+  </div>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>
