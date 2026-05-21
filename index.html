@@ -90,6 +90,7 @@
         <button class="nav-btn nav-kasir" data-page="kasir">Kasir</button>
         <button class="nav-btn nav-supplier" data-page="supplier">Supplier &amp; Hutang</button>
         <button class="nav-btn nav-po" data-page="po">PO &amp; Budget</button>
+        <button class="nav-btn nav-rekening" data-page="rekening">Rekening</button>
         <button class="nav-btn nav-laporan" data-page="laporan">Laporan</button>
         <button class="nav-btn nav-admin" data-page="admin">Admin</button>
       </nav>
@@ -141,6 +142,16 @@
             <div class="card-label">Perlu Disiapkan</div>
             <div class="card-value" id="dash-perlu-disiapkan">Rp 0</div>
           </div>
+        </div>
+
+        <h3 class="section-title">Saldo per Rekening</h3>
+        <div class="table-wrap" style="margin-bottom:8px">
+          <table>
+            <thead>
+              <tr><th>Rekening</th><th>Bank / Platform</th><th>Saldo</th></tr>
+            </thead>
+            <tbody id="tbody-saldo-rek"></tbody>
+          </table>
         </div>
 
         <h3 class="section-title">Ringkasan Hutang per Supplier</h3>
@@ -282,6 +293,19 @@
               <input type="number" id="kas-jumlah" placeholder="0" min="0" />
             </div>
             <div class="form-group">
+              <label>Via</label>
+              <select id="kas-via">
+                <option value="tunai">Tunai</option>
+                <option value="transfer">Transfer</option>
+              </select>
+            </div>
+            <div class="form-group" id="kas-rekening-wrap" style="display:none">
+              <label>Rekening</label>
+              <select id="kas-rekening">
+                <option value="">-- Pilih Rekening --</option>
+              </select>
+            </div>
+            <div class="form-group">
               <label>Keterangan</label>
               <input type="text" id="kas-ket" placeholder="Opsional" />
             </div>
@@ -308,6 +332,7 @@
                 <th>Kategori</th>
                 <th>Supplier</th>
                 <th>Jumlah</th>
+                <th>Via</th>
                 <th>Keterangan</th>
                 <th class="col-aksi col-aksi-kasir">Aksi</th>
               </tr>
@@ -317,17 +342,17 @@
               <tr>
                 <td colspan="4" class="tfoot-label">Pemasukan</td>
                 <td id="tfoot-kas-masuk" class="tfoot-value text-green"></td>
-                <td colspan="2"></td>
+                <td colspan="3"></td>
               </tr>
               <tr>
                 <td colspan="4" class="tfoot-label">Pengeluaran</td>
                 <td id="tfoot-kas-keluar" class="tfoot-value text-red"></td>
-                <td colspan="2"></td>
+                <td colspan="3"></td>
               </tr>
               <tr>
                 <td colspan="4" class="tfoot-label">Saldo</td>
                 <td id="tfoot-kas-saldo" class="tfoot-value text-blue"></td>
-                <td colspan="2"></td>
+                <td colspan="3"></td>
               </tr>
             </tfoot>
           </table>
@@ -570,6 +595,45 @@
               </tr>
             </thead>
             <tbody id="tbody-users"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─── REKENING ──────────────────────────────────── -->
+      <section id="page-rekening" class="page">
+        <h2 class="page-title">Manajemen Rekening</h2>
+        <div class="form-card action-form" id="form-rekening-wrap">
+          <h3>Tambah Rekening</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nama Rekening</label>
+              <input type="text" id="rek-nama" placeholder="cth: BCA Toko" />
+            </div>
+            <div class="form-group">
+              <label>Bank / Platform</label>
+              <input type="text" id="rek-bank" placeholder="cth: BCA, BRI, GoPay, OVO" />
+            </div>
+            <div class="form-group">
+              <label>No. Rekening (opsional)</label>
+              <input type="text" id="rek-norek" placeholder="cth: 1234567890" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-rek">Simpan Rekening</button>
+        </div>
+
+        <h3 class="section-title">Daftar Rekening</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nama Rekening</th>
+                <th>Bank / Platform</th>
+                <th>No. Rekening</th>
+                <th>Saldo</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-rekening"></tbody>
           </table>
         </div>
       </section>

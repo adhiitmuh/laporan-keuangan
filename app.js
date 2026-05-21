@@ -68,6 +68,7 @@ let pembelian = [];
 let kasirData = [];
 let users     = [];
 let poData    = [];
+let rekening  = [];
 
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
@@ -114,8 +115,8 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'laporan', 'admin'],
-  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'laporan'],
+  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'laporan', 'admin'],
+  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'laporan'],
   kasir:    ['kasir'],
   pengawas: ['dashboard', 'po', 'laporan'],
 };
@@ -162,6 +163,7 @@ function navigateTo(page) {
   if (page === 'dashboard') renderDashboard();
   if (page === 'laporan')   renderLaporan();
   if (page === 'admin')     renderUsers();
+  if (page === 'rekening')  renderRekening();
   if (page === 'po') {
     generatePONumber().then(n => { const el = document.getElementById('po-nomor'); if (el) el.value = n; });
     if (!document.getElementById('tbody-po-items').children.length) addItemRow();
@@ -363,6 +365,14 @@ function startListeners() {
     if (currentRole === 'admin') renderUsers();
   }));
 
+  // rekening
+  unsubs.push(onSnapshot(query(collection(db, 'rekening'), orderBy('createdAt', 'asc')), snap => {
+    rekening = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    populateRekeningSelects();
+    renderRekening();
+    renderDashboard();
+  }));
+
   // purchase orders
   unsubs.push(onSnapshot(query(collection(db, 'po'), orderBy('createdAt', 'desc')), snap => {
     poData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -379,6 +389,30 @@ function stopListeners() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Helper: supplier name & stats
 // ═══════════════════════════════════════════════════════════════════════════════
+function rekeningName(id) {
+  if (!id || id === 'tunai') return 'Tunai';
+  const r = rekening.find(x => x.id === id);
+  return r ? `${r.nama} (${r.bank})` : id;
+}
+
+function populateRekeningSelects() {
+  ['kas-rekening'].forEach(selId => {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    const prevVal = sel.value;
+    const firstOpt = sel.options[0].cloneNode(true);
+    sel.innerHTML = '';
+    sel.appendChild(firstOpt);
+    rekening.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `${r.nama} (${r.bank})`;
+      sel.appendChild(opt);
+    });
+    sel.value = prevVal;
+  });
+}
+
 function supplierName(id) {
   return suppliers.find(s => s.id === id)?.nama || id || '-';
 }
@@ -444,6 +478,26 @@ function renderDashboard() {
   if (bwPerlu) {
     bwPerlu.textContent = rupiah(perluDisiapkan);
     bwPerlu.className = 'budget-widget-value ' + (perluDisiapkan > 0 ? 'text-red' : 'text-green');
+  }
+
+  // Saldo per rekening
+  const tbodySaldo = document.getElementById('tbody-saldo-rek');
+  if (tbodySaldo) {
+    tbodySaldo.innerHTML = '';
+    const saldoTunai = kasirData
+      .filter(k => !k.via || k.via === 'tunai')
+      .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+    const tunaiTr = document.createElement('tr');
+    tunaiTr.innerHTML = `<td><strong>Tunai</strong></td><td>—</td><td class="${saldoTunai >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoTunai)}</strong></td>`;
+    tbodySaldo.appendChild(tunaiTr);
+    rekening.forEach(r => {
+      const s = kasirData
+        .filter(k => k.rekeningId === r.id)
+        .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><strong>${r.nama}</strong></td><td>${r.bank}${r.noRek ? ' · ' + r.noRek : ''}</td><td class="${s >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(s)}</strong></td>`;
+      tbodySaldo.appendChild(tr);
+    });
   }
 
   const tbody = document.getElementById('tbody-hutang-summary');
@@ -640,6 +694,11 @@ document.getElementById('kas-kategori').addEventListener('change', function () {
     this.value === 'bayar-supplier' ? '' : 'none';
 });
 
+document.getElementById('kas-via').addEventListener('change', function () {
+  document.getElementById('kas-rekening-wrap').style.display =
+    this.value === 'transfer' ? '' : 'none';
+});
+
 function renderKasir(filter = {}) {
   const tbody = document.getElementById('tbody-kasir');
   if (!tbody) return;
@@ -668,6 +727,7 @@ function renderKasir(filter = {}) {
         <td>${k.kategori}</td>
         <td>${k.supplierId ? supplierName(k.supplierId) : '-'}</td>
         <td class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(k.jumlah)}</strong></td>
+        <td>${!k.via || k.via === 'tunai' ? 'Tunai' : rekeningName(k.rekeningId)}</td>
         <td>${k.ket || '-'}</td>
         <td style="${isReadOnly ? 'display:none' : ''}">
           <button class="btn-sm btn-sm-red" data-del-kas="${k.id}">Hapus</button>
@@ -692,22 +752,30 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
   const jenis     = document.getElementById('kas-jenis').value;
   const kategori  = document.getElementById('kas-kategori').value;
   const jumlah    = Number(document.getElementById('kas-jumlah').value);
-  const supplierId = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
+  const supplierId  = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
+  const via         = document.getElementById('kas-via').value;
+  const rekeningId  = via === 'transfer' ? document.getElementById('kas-rekening').value : null;
 
   if (!tgl || !jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return; }
+  if (via === 'transfer' && !rekeningId) { toast('Pilih rekening untuk transfer', 'error'); return; }
 
   try {
     await addDoc(collection(db, 'kasir'), {
       tgl, jenis, kategori, jumlah,
-      supplierId: supplierId || null,
+      supplierId:  supplierId  || null,
+      via,
+      rekeningId:  rekeningId  || null,
       ket: document.getElementById('kas-ket').value.trim(),
       createdAt: serverTimestamp(),
     });
     ['kas-tgl', 'kas-jumlah', 'kas-ket'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('kas-supplier').value = '';
-    document.getElementById('kas-supplier-wrap').style.display = 'none';
-    document.getElementById('kas-tgl').value = today();
+    document.getElementById('kas-supplier').value  = '';
+    document.getElementById('kas-rekening').value  = '';
+    document.getElementById('kas-supplier-wrap').style.display  = 'none';
+    document.getElementById('kas-rekening-wrap').style.display  = 'none';
+    document.getElementById('kas-via').value       = 'tunai';
+    document.getElementById('kas-tgl').value       = today();
     toast('Transaksi berhasil disimpan');
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
@@ -1206,6 +1274,57 @@ document.getElementById('btn-filter-po').addEventListener('click', () => {
     status:     document.getElementById('filter-po-status').value,
     bulan:      document.getElementById('filter-po-bulan').value,
     supplierId: document.getElementById('filter-po-supplier').value,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REKENING
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderRekening() {
+  const tbody = document.getElementById('tbody-rekening');
+  if (!tbody) return;
+  if (!rekening.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-note">Belum ada rekening</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  rekening.forEach(r => {
+    const saldo = kasirData
+      .filter(k => k.rekeningId === r.id)
+      .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${r.nama}</strong></td>
+      <td>${r.bank}</td>
+      <td>${r.noRek || '-'}</td>
+      <td class="${saldo >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldo)}</strong></td>
+      <td><button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-simpan-rek').addEventListener('click', async () => {
+  const nama  = document.getElementById('rek-nama').value.trim();
+  const bank  = document.getElementById('rek-bank').value.trim();
+  const noRek = document.getElementById('rek-norek').value.trim();
+  if (!nama || !bank) { toast('Nama dan bank wajib diisi', 'error'); return; }
+  try {
+    await addDoc(collection(db, 'rekening'), { nama, bank, noRek, createdAt: serverTimestamp() });
+    ['rek-nama', 'rek-bank', 'rek-norek'].forEach(id => { document.getElementById(id).value = ''; });
+    toast('Rekening berhasil ditambahkan');
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  }
+});
+
+document.getElementById('tbody-rekening').addEventListener('click', e => {
+  const id = e.target.dataset.delRek;
+  if (!id) return;
+  const r = rekening.find(x => x.id === id);
+  confirmDelete(`Hapus rekening <strong>${r?.nama || ''}</strong>?<br><small style="color:var(--text-muted)">Riwayat transaksi tidak ikut terhapus.</small>`, async () => {
+    try { await deleteDoc(doc(db, 'rekening', id)); toast('Rekening dihapus'); }
+    catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
   });
 });
 
