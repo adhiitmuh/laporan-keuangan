@@ -117,7 +117,7 @@ const ROLE_PAGES = {
   admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'laporan', 'admin'],
   pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'laporan'],
   kasir:    ['kasir'],
-  pengawas: ['dashboard', 'laporan'],
+  pengawas: ['dashboard', 'po', 'laporan'],
 };
 
 function applyRoleUI(role) {
