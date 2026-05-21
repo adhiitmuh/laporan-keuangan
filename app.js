@@ -33,7 +33,7 @@ import {
 // Firebase config
 // ═══════════════════════════════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey:            'AIzaSyAScvb0X6pJLvIXMgP7O5QqM85ZgTfX-Go',
+  apiKey:            'AIzaSyAScvbOX6pJLvIXMgP7O5QqM85ZgTfX-Go',
   authDomain:        'laporan-keuangan-hs.firebaseapp.com',
   projectId:         'laporan-keuangan-hs',
   storageBucket:     'laporan-keuangan-hs.firebasestorage.app',
