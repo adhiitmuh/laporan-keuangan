@@ -71,6 +71,9 @@ let currentUser     = null; // Firebase Auth user object
 let currentUserData = null; // Firestore users/{uid} document data
 let currentRole     = null; // string: 'admin' | 'pengurus' | 'kasir' | 'pengawas'
 
+// Flag untuk mencegah onAuthStateChanged mengganggu proses setup
+let isSettingUp = false;
+
 // Unsubscribe handles untuk onSnapshot
 const unsubs = [];
 
@@ -188,14 +191,25 @@ document.getElementById('btn-setup').addEventListener('click', async () => {
   showEl('setup-loading');
 
   try {
+    isSettingUp = true;
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await setDoc(doc(db, 'users', cred.user.uid), {
       uid: cred.user.uid, nama, email, role: 'admin', active: true,
       createdAt: serverTimestamp(),
     });
     await setDoc(doc(db, 'meta', 'config'), { initialized: true });
-    // onAuthStateChanged akan handle selanjutnya
+    isSettingUp = false;
+    // Trigger manual karena onAuthStateChanged sudah lewat
+    currentUser     = cred.user;
+    currentUserData = { uid: cred.user.uid, nama, email, role: 'admin', active: true };
+    currentRole     = 'admin';
+    setUserBadge(currentUserData);
+    applyRoleUI('admin');
+    startListeners();
+    showScreen('app');
+    navigateTo('dashboard');
   } catch (e) {
+    isSettingUp = false;
     errEl.textContent = friendlyError(e.code);
     errEl.classList.remove('hidden');
     showEl('btn-setup');
@@ -253,6 +267,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
 showScreen('loading');
 
 onAuthStateChanged(auth, async (firebaseUser) => {
+  if (isSettingUp) return; // Tunggu setup selesai dulu
   if (!firebaseUser) {
     // Tidak login — cek first-run
     try {
