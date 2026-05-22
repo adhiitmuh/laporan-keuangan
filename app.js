@@ -1006,6 +1006,7 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
     document.getElementById('bayar-info-total').textContent    = rupiah(p.total);
     document.getElementById('bayar-tgl').value                 = today();
     document.getElementById('bayar-bukti-file').value          = '';
+    document.getElementById('bayar-bukti-link').value          = '';
     document.getElementById('modal-bayar').classList.remove('hidden');
     return;
   }
@@ -1022,12 +1023,16 @@ function closeBayarModal() {
 
 document.getElementById('btn-bayar-konfirm').addEventListener('click', async () => {
   if (!bayarPembelianId) return;
-  const tgl       = document.getElementById('bayar-tgl').value;
+  const tgl        = document.getElementById('bayar-tgl').value;
   const rekeningId = document.getElementById('bayar-rekening').value;
-  const file      = document.getElementById('bayar-bukti-file').files[0];
+  const file       = document.getElementById('bayar-bukti-file').files[0];
+  const linkInput  = document.getElementById('bayar-bukti-link').value.trim();
 
   if (!tgl)       { toast('Tanggal bayar wajib diisi', 'error'); return; }
   if (!rekeningId){ toast('Pilih sumber dana (rekening / tunai)', 'error'); return; }
+  if (linkInput && !/^https?:\/\/.+/.test(linkInput)) {
+    toast('Link bukti harus diawali https:// atau http://', 'error'); return;
+  }
 
   const p = pembelian.find(x => x.id === bayarPembelianId);
   if (!p) { closeBayarModal(); return; }
@@ -1037,13 +1042,15 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
   btn.textContent = '⏳ Menyimpan…';
 
   try {
-    // 1. Upload bukti (jika ada file)
+    // 1. Upload bukti (jika ada file), atau gunakan link yang diinput
     let buktiUrl = p.buktiTransfer || null;
     if (file) {
       toast('Mengupload bukti…');
       const ref = storageRef(storage, `bukti-transfer/${bayarPembelianId}_${Date.now()}_${file.name}`);
       await uploadBytes(ref, file);
       buktiUrl = await getDownloadURL(ref);
+    } else if (linkInput) {
+      buktiUrl = linkInput;
     }
 
     // 2. Update pembelian: bukti + auto-approve
