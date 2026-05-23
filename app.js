@@ -1904,15 +1904,39 @@ function renderPiutang() {
       <td>${nextTgl !== '–' ? `<span style="font-weight:600">${nextTgl}</span>` : '–'}</td>
       <td>${lunas ? '<span class="badge badge-lunas">✓ Lunas</span>' : '<span class="badge badge-hutang">Aktif</span>'}</td>
       <td>${inputByBadge(p)}</td>
-      <td style="${isReadOnly ? 'display:none' : ''}">
+      <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
-          ${!lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${p.id}" data-nama="${p.nama}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
-          <button class="btn-sm btn-sm-red" data-del-piutang="${p.id}">Hapus</button>
+          <button class="btn-sm btn-sm-gray" data-riwayat-piu="${p.id}">📋 Riwayat</button>
+          ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${p.id}" data-nama="${p.nama}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
+          ${!isReadOnly ? `<button class="btn-sm btn-sm-red" data-del-piutang="${p.id}">Hapus</button>` : ''}
         </div>
       </td>
     `;
     tbody.appendChild(tr);
-  });
+
+    // Baris detail riwayat (tersembunyi)
+    const trDetail = document.createElement('tr');
+    trDetail.id = `riwayat-row-${p.id}`;
+    trDetail.style.display = 'none';
+    trDetail.innerHTML = `<td colspan="10" style="padding:0;background:#f8fafc">
+      <div style="padding:12px 16px">
+        <strong style="font-size:13px;color:#0891b2">📋 Riwayat Pembayaran — ${p.nama}</strong>
+        <table style="width:100%;margin-top:8px;font-size:12px;border-collapse:collapse">
+          <thead>
+            <tr style="background:#e0f2fe;color:#075985">
+              <th style="padding:6px 8px;text-align:left;border-radius:4px 0 0 4px">Tanggal</th>
+              <th style="padding:6px 8px;text-align:right">Jumlah</th>
+              <th style="padding:6px 8px;text-align:left">Keterangan</th>
+              <th style="padding:6px 8px;text-align:left;border-radius:0 4px 4px 0">Diinput Oleh</th>
+            </tr>
+          </thead>
+          <tbody id="riwayat-piu-${p.id}">
+            <tr><td colspan="4" style="padding:8px;color:#9ca3af;text-align:center">Memuat…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </td>`;
+    tbody.appendChild(trDetail);
 
   setEl('tfoot-piu-pinjaman', rupiah(totPinjaman));
   setEl('tfoot-piu-bayar',    rupiah(totBayar));
@@ -1941,8 +1965,33 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   } catch (e) { toast('Gagal: ' + e.message, 'error'); }
 });
 
-// Klik tabel piutang: catat bayar atau hapus
+// Klik tabel piutang: riwayat, catat bayar, atau hapus
 document.getElementById('tbody-piutang').addEventListener('click', e => {
+  const riwId = e.target.dataset.riwayatPiu;
+  if (riwId) {
+    const row = document.getElementById(`riwayat-row-${riwId}`);
+    if (!row) return;
+    const isOpen = row.style.display !== 'none';
+    row.style.display = isOpen ? 'none' : '';
+    if (!isOpen) {
+      const tbody = document.getElementById(`riwayat-piu-${riwId}`);
+      const bayar = piutangBayar.filter(b => b.piutangId === riwId)
+        .sort((a, b) => (a.tgl || '') < (b.tgl || '') ? -1 : 1);
+      if (!bayar.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="padding:8px;color:#9ca3af;text-align:center">Belum ada riwayat pembayaran</td></tr>';
+      } else {
+        tbody.innerHTML = bayar.map(b => `
+          <tr style="border-top:1px solid #e2e8f0">
+            <td style="padding:6px 8px">${b.tgl || '–'}</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:600;color:#16a34a">${rupiah(b.jumlah)}</td>
+            <td style="padding:6px 8px;color:#6b7280">${b.ket || '–'}</td>
+            <td style="padding:6px 8px;color:#6b7280">${b.inputByNama || b.inputBy || '–'}</td>
+          </tr>`).join('');
+      }
+    }
+    return;
+  }
+
   const catId = e.target.dataset.catatBayar;
   if (catId) {
     const nama    = e.target.dataset.nama;

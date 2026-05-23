@@ -273,6 +273,8 @@ body {
 .btn-sm-orange:hover { background: var(--orange); color: var(--white); }
 .btn-sm-blue   { background: var(--blue-bg);   color: var(--blue); }
 .btn-sm-blue:hover   { background: var(--blue);   color: var(--white); }
+.btn-sm-gray   { background: #f1f5f9; color: #475569; }
+.btn-sm-gray:hover   { background: #cbd5e1; color: #1e293b; }
 .btn-sm-green  { background: var(--green-bg);  color: var(--green); }
 .btn-sm-green:hover  { background: var(--green);  color: var(--white); }
 
