@@ -91,9 +91,35 @@ const unsubs = [];
 // ═══════════════════════════════════════════════════════════════════════════════
 // Utils
 // ═══════════════════════════════════════════════════════════════════════════════
-const rupiah  = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
-const today   = () => new Date().toISOString().split('T')[0];
+const rupiah       = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+const today        = () => new Date().toISOString().split('T')[0];
+const formatRibuan = n => Number(n || 0).toLocaleString('id-ID');
+const parseRibuan  = s => Number(String(s).replace(/\./g, '').replace(/,/g, '')) || 0;
 const monthOf = d => (d ? String(d).slice(0, 7) : '');
+
+// Auto-format input angka dengan titik ribuan saat user mengetik
+const RIBUAN_IDS = [
+  'beli-qty','beli-harga','kas-jumlah','ang-target',
+  'piu-jumlah','piu-cicilan','bayar-jumlah','mut-jumlah',
+  'saldo-awal-tunai','rek-saldo-awal',
+];
+RIBUAN_IDS.forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    const raw    = el.value.replace(/\./g, '').replace(/[^0-9]/g, '');
+    const cursor = el.selectionStart;
+    const before = el.value.slice(0, cursor).replace(/\./g, '').replace(/[^0-9]/g, '').length;
+    el.value = raw ? Number(raw).toLocaleString('id-ID') : '';
+    // Hitung ulang posisi cursor setelah titik ditambahkan
+    let pos = 0, count = 0;
+    for (let i = 0; i < el.value.length; i++) {
+      if (el.value[i] !== '.') count++;
+      if (count === before) { pos = i + 1; break; }
+    }
+    el.setSelectionRange(pos, pos);
+  });
+});
 
 // Helper: kembalikan field inputBy untuk disimpan ke Firestore
 function inputByFields() {
@@ -789,7 +815,7 @@ document.getElementById('tbody-supplier').addEventListener('click', e => {
 document.getElementById('btn-simpan-mutasi').addEventListener('click', async () => {
   const dari   = document.getElementById('mut-dari').value;
   const ke     = document.getElementById('mut-ke').value;
-  const jumlah = Number(document.getElementById('mut-jumlah').value) || 0;
+  const jumlah = parseRibuan(document.getElementById('mut-jumlah').value) || 0;
   const tgl    = document.getElementById('mut-tgl').value;
   if (dari === ke)  { toast('Dari dan Ke tidak boleh sama', 'error'); return; }
   if (!jumlah)      { toast('Jumlah wajib diisi', 'error'); return; }
@@ -814,8 +840,8 @@ document.getElementById('btn-simpan-mutasi').addEventListener('click', async () 
 // PEMBELIAN page
 // ═══════════════════════════════════════════════════════════════════════════════
 function calcBeliTotal() {
-  const qty   = Number(document.getElementById('beli-qty').value) || 0;
-  const harga = Number(document.getElementById('beli-harga').value) || 0;
+  const qty   = parseRibuan(document.getElementById('beli-qty').value) || 0;
+  const harga = parseRibuan(document.getElementById('beli-harga').value) || 0;
   document.getElementById('beli-total').value = rupiah(qty * harga);
 }
 document.getElementById('beli-qty').addEventListener('input', calcBeliTotal);
@@ -915,8 +941,8 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
   const tgl    = document.getElementById('beli-tgl').value;
   const supId  = document.getElementById('beli-supplier').value;
   const jenis  = document.getElementById('beli-jenis').value.trim();
-  const qty    = Number(document.getElementById('beli-qty').value);
-  const harga  = Number(document.getElementById('beli-harga').value);
+  const qty    = parseRibuan(document.getElementById('beli-qty').value);
+  const harga  = parseRibuan(document.getElementById('beli-harga').value);
   if (!tgl || !supId || !jenis || !qty || !harga) { toast('Lengkapi semua field wajib', 'error'); return; }
   try {
     await addDoc(collection(db, 'pembelian'), {
@@ -1180,7 +1206,7 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
   const tgl       = document.getElementById('kas-tgl').value;
   const jenis     = document.getElementById('kas-jenis').value;
   const kategori  = document.getElementById('kas-kategori').value;
-  const jumlah    = Number(document.getElementById('kas-jumlah').value);
+  const jumlah    = parseRibuan(document.getElementById('kas-jumlah').value);
   const supplierId  = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
   const via         = document.getElementById('kas-via').value;
   const rekeningId  = via === 'transfer' ? document.getElementById('kas-rekening').value : null;
@@ -1786,7 +1812,7 @@ function renderAnggaran() {
 
 document.getElementById('btn-simpan-ang').addEventListener('click', async () => {
   const nama   = document.getElementById('ang-nama').value.trim();
-  const target = Number(document.getElementById('ang-target').value) || 0;
+  const target = parseRibuan(document.getElementById('ang-target').value) || 0;
   if (!nama)   { toast('Nama anggaran wajib diisi', 'error'); return; }
   if (!target) { toast('Target dana wajib diisi', 'error'); return; }
   try {
@@ -1896,13 +1922,13 @@ function renderPiutang() {
 // Tambah piutang baru
 document.getElementById('btn-simpan-piutang').addEventListener('click', async () => {
   const nama   = document.getElementById('piu-nama').value.trim();
-  const jumlah = Number(document.getElementById('piu-jumlah').value) || 0;
+  const jumlah = parseRibuan(document.getElementById('piu-jumlah').value) || 0;
   const tgl    = document.getElementById('piu-tgl').value;
   if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
   try {
     await addDoc(collection(db, 'piutang'), {
       nama, jumlah, tgl,
-      cicilan:    Number(document.getElementById('piu-cicilan').value) || 0,
+      cicilan:    parseRibuan(document.getElementById('piu-cicilan').value) || 0,
       tglCicilan: document.getElementById('piu-tgl-cicilan').value,
       ket:        document.getElementById('piu-ket').value.trim(),
       status:     'aktif',
@@ -1924,7 +1950,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
     document.getElementById('bayar-piutang-id').value = catId;
     document.getElementById('panel-bayar-title').textContent = `Catat Pembayaran — ${nama}`;
     document.getElementById('bayar-tgl').value    = today();
-    document.getElementById('bayar-jumlah').value = cicilan > 0 ? cicilan : '';
+    document.getElementById('bayar-jumlah').value = cicilan > 0 ? formatRibuan(cicilan) : '';
     document.getElementById('bayar-ket').value    = '';
     const panel = document.getElementById('panel-catat-bayar');
     panel.style.display = '';
@@ -1948,7 +1974,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
 // Simpan pembayaran
 document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', async () => {
   const piuId  = document.getElementById('bayar-piutang-id').value;
-  const jumlah = Number(document.getElementById('bayar-jumlah').value) || 0;
+  const jumlah = parseRibuan(document.getElementById('bayar-jumlah').value) || 0;
   const tgl    = document.getElementById('bayar-tgl').value;
   if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   try {
@@ -2017,7 +2043,7 @@ function renderRekening() {
 }
 
 document.getElementById('btn-simpan-saldo-tunai').addEventListener('click', async () => {
-  const val = Number(document.getElementById('saldo-awal-tunai').value) || 0;
+  const val = parseRibuan(document.getElementById('saldo-awal-tunai').value) || 0;
   try {
     await setDoc(doc(db, 'settings', 'saldo-awal'), { tunai: val }, { merge: true });
     toast('Saldo awal tunai disimpan ✓');
@@ -2030,7 +2056,7 @@ document.getElementById('btn-simpan-rek').addEventListener('click', async () => 
   const nama      = document.getElementById('rek-nama').value.trim();
   const bank      = document.getElementById('rek-bank').value.trim();
   const noRek     = document.getElementById('rek-norek').value.trim();
-  const saldoAwal = Number(document.getElementById('rek-saldo-awal').value) || 0;
+  const saldoAwal = parseRibuan(document.getElementById('rek-saldo-awal').value) || 0;
   if (!nama || !bank) { toast('Nama dan bank wajib diisi', 'error'); return; }
   try {
     await addDoc(collection(db, 'rekening'), { nama, bank, noRek, saldoAwal, createdAt: serverTimestamp() });
