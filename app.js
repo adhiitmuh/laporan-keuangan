@@ -101,7 +101,7 @@ const monthOf = d => (d ? String(d).slice(0, 7) : '');
 const RIBUAN_IDS = [
   'beli-qty','beli-harga','kas-jumlah','ang-target',
   'piu-jumlah','piu-cicilan','bayar-jumlah','mut-jumlah',
-  'saldo-awal-tunai','rek-saldo-awal',
+  'saldo-awal-tunai','rek-saldo-awal','kas-piu-cicilan',
 ];
 RIBUAN_IDS.forEach(id => {
   const el = document.getElementById(id);
@@ -142,6 +142,7 @@ function inputByBadge(item) {
 const KATEGORI_LABEL = {
   'penjualan':      'Penjualan',
   'bayar-supplier': 'Bayar Supplier',
+  'piutang':        'Piutang / Pinjaman',
   'gaji':           'Gaji Karyawan',
   'operasional':    'Operasional',
   'lainnya':        'Lainnya',
@@ -1142,6 +1143,8 @@ function renderMutasi() {
 document.getElementById('kas-kategori').addEventListener('change', function () {
   document.getElementById('kas-supplier-wrap').style.display =
     this.value === 'bayar-supplier' ? '' : 'none';
+  document.getElementById('kas-piutang-wrap').style.display =
+    this.value === 'piutang' ? '' : 'none';
 });
 
 document.getElementById('kas-via').addEventListener('change', function () {
@@ -1211,28 +1214,49 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
   const via         = document.getElementById('kas-via').value;
   const rekeningId  = via === 'transfer' ? document.getElementById('kas-rekening').value : null;
 
+  const piuNama = kategori === 'piutang' ? document.getElementById('kas-piu-nama').value.trim() : '';
+
   if (!tgl || !jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return; }
+  if (kategori === 'piutang' && !piuNama) { toast('Nama peminjam wajib diisi', 'error'); return; }
   if (via === 'transfer' && !rekeningId) { toast('Pilih rekening untuk transfer', 'error'); return; }
 
   try {
+    const ket = document.getElementById('kas-ket').value.trim();
     await addDoc(collection(db, 'kasir'), {
       tgl, jenis, kategori, jumlah,
       supplierId:  supplierId  || null,
       via,
       rekeningId:  rekeningId  || null,
-      ket: document.getElementById('kas-ket').value.trim(),
+      ket,
       ...inputByFields(),
       createdAt: serverTimestamp(),
     });
-    ['kas-tgl', 'kas-jumlah', 'kas-ket'].forEach(id => { document.getElementById(id).value = ''; });
+
+    // Jika kategori piutang, otomatis buat entri piutang
+    if (kategori === 'piutang') {
+      const cicilan   = parseRibuan(document.getElementById('kas-piu-cicilan').value) || 0;
+      const tglCicilan = document.getElementById('kas-piu-tgl-cicilan').value;
+      await addDoc(collection(db, 'piutang'), {
+        nama: piuNama, jumlah, tgl,
+        cicilan, tglCicilan,
+        ket: ket || `Dicatat dari kasir ${tgl}`,
+        status: 'aktif',
+        ...inputByFields(),
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    ['kas-tgl', 'kas-jumlah', 'kas-ket', 'kas-piu-nama', 'kas-piu-cicilan', 'kas-piu-tgl-cicilan']
+      .forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('kas-supplier').value  = '';
     document.getElementById('kas-rekening').value  = '';
     document.getElementById('kas-supplier-wrap').style.display  = 'none';
     document.getElementById('kas-rekening-wrap').style.display  = 'none';
+    document.getElementById('kas-piutang-wrap').style.display   = 'none';
     document.getElementById('kas-via').value       = 'tunai';
     document.getElementById('kas-tgl').value       = today();
-    toast('Transaksi berhasil disimpan');
+    toast(kategori === 'piutang' ? 'Transaksi & piutang berhasil disimpan ✓' : 'Transaksi berhasil disimpan');
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
   }
