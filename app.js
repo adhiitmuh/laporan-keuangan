@@ -628,8 +628,8 @@ function renderDashboard() {
   const totalPiutangAktif = piutangData
     .filter(p => p.status !== 'lunas')
     .reduce((a, p) => {
-      const dibayar = piutangBayar.filter(b => b.piutangId === p.id).reduce((s, b) => s + Number(b.jumlah || 0), 0);
-      return a + Math.max(0, Number(p.jumlah || 0) - dibayar);
+      const { dibayar, diambil } = piutangStats(p.id);
+      return a + Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
     }, 0);
 
   setEl('dash-pemasukan',      rupiah(totalMasuk));
@@ -1850,10 +1850,10 @@ document.getElementById('tbody-anggaran').addEventListener('click', e => {
 // PIUTANG
 // ═══════════════════════════════════════════════════════════════════════════════
 function piutangStats(id) {
-  const dibayar = piutangBayar
-    .filter(b => b.piutangId === id)
-    .reduce((a, b) => a + Number(b.jumlah || 0), 0);
-  return dibayar;
+  const records  = piutangBayar.filter(b => b.piutangId === id);
+  const dibayar  = records.filter(b => !b.type || b.type === 'bayar').reduce((a, b) => a + Number(b.jumlah || 0), 0);
+  const diambil  = records.filter(b => b.type === 'ambil').reduce((a, b) => a + Number(b.jumlah || 0), 0);
+  return { dibayar, diambil };
 }
 
 function nextCicilanDate(tglMulai, cicilanPerBulan, dibayar, total) {
@@ -1880,19 +1880,20 @@ function renderPiutang() {
   let totPinjaman = 0, totBayar = 0, totSisa = 0;
 
   piutangData.forEach(p => {
-    const dibayar = piutangStats(p.id);
-    const sisa    = Math.max(0, Number(p.jumlah || 0) - dibayar);
+    const { dibayar, diambil } = piutangStats(p.id);
+    const totalPinjaman = Number(p.jumlah || 0) + diambil;
+    const sisa    = Math.max(0, totalPinjaman - dibayar);
     const lunas   = sisa <= 0 || p.status === 'lunas';
-    const nextTgl = nextCicilanDate(p.tglCicilan, Number(p.cicilan || 0), dibayar, Number(p.jumlah || 0));
+    const nextTgl = nextCicilanDate(p.tglCicilan, Number(p.cicilan || 0), dibayar, totalPinjaman);
 
-    if (!lunas) { totPinjaman += Number(p.jumlah || 0); totBayar += dibayar; totSisa += sisa; }
+    if (!lunas) { totPinjaman += totalPinjaman; totBayar += dibayar; totSisa += sisa; }
 
-    const pct = Number(p.jumlah) > 0 ? Math.min(100, Math.round(dibayar / Number(p.jumlah) * 100)) : 0;
+    const pct = totalPinjaman > 0 ? Math.min(100, Math.round(dibayar / totalPinjaman * 100)) : 0;
     const tr  = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${p.nama}</strong>${p.ket ? `<br><small style="color:var(--text-muted)">${p.ket}</small>` : ''}</td>
       <td>${p.tgl || '–'}</td>
-      <td>${rupiah(p.jumlah)}</td>
+      <td>${rupiah(totalPinjaman)}${diambil > 0 ? `<br><small style="color:#0891b2">+${rupiah(diambil)} ambil lagi</small>` : ''}</td>
       <td>
         ${rupiah(dibayar)}
         <div style="height:4px;background:#e2e8f0;border-radius:2px;margin-top:4px;width:80px">
@@ -1908,6 +1909,7 @@ function renderPiutang() {
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn-sm btn-sm-gray" data-riwayat-piu="${p.id}">📋 Riwayat</button>
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${p.id}" data-nama="${p.nama}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
+          ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-orange" data-ambil-lagi="${p.id}" data-nama="${p.nama}">💸 Ambil Lagi</button>` : ''}
           ${!isReadOnly ? `<button class="btn-sm btn-sm-red" data-del-piutang="${p.id}">Hapus</button>` : ''}
         </div>
       </td>
@@ -1978,17 +1980,43 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
       const bayar = piutangBayar.filter(b => b.piutangId === riwId)
         .sort((a, b) => (a.tgl || '') < (b.tgl || '') ? -1 : 1);
       if (!bayar.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="padding:8px;color:#9ca3af;text-align:center">Belum ada riwayat pembayaran</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="padding:8px;color:#9ca3af;text-align:center">Belum ada riwayat</td></tr>';
       } else {
-        tbody.innerHTML = bayar.map(b => `
-          <tr style="border-top:1px solid #e2e8f0">
+        tbody.innerHTML = bayar.map(b => {
+          const isAmbil = b.type === 'ambil';
+          return `
+          <tr style="border-top:1px solid #e2e8f0;background:${isAmbil ? '#fff7ed' : 'transparent'}">
             <td style="padding:6px 8px">${b.tgl || '–'}</td>
-            <td style="padding:6px 8px;text-align:right;font-weight:600;color:#16a34a">${rupiah(b.jumlah)}</td>
-            <td style="padding:6px 8px;color:#6b7280">${b.ket || '–'}</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:600;color:${isAmbil ? '#d97706' : '#16a34a'}">
+              ${isAmbil ? '−' : '+'}${rupiah(b.jumlah)}
+            </td>
+            <td style="padding:6px 8px">
+              ${isAmbil
+                ? '<span style="background:#fef3c7;color:#92400e;font-size:11px;padding:2px 6px;border-radius:4px">💸 Ambil</span>'
+                : '<span style="background:#dcfce7;color:#166534;font-size:11px;padding:2px 6px;border-radius:4px">✓ Bayar</span>'}
+              ${b.ket ? `<span style="color:#6b7280;margin-left:4px">${b.ket}</span>` : ''}
+            </td>
             <td style="padding:6px 8px;color:#6b7280">${b.inputByNama || b.inputBy || '–'}</td>
-          </tr>`).join('');
+          </tr>`;
+        }).join('');
       }
     }
+    return;
+  }
+
+  const ambilId = e.target.dataset.ambilLagi;
+  if (ambilId) {
+    const nama = e.target.dataset.nama;
+    ambilLagiId = ambilId;
+    document.getElementById('ambil-piutang-id').value = ambilId;
+    document.getElementById('panel-ambil-title').textContent = `Catat Pengambilan Uang — ${nama}`;
+    document.getElementById('ambil-tgl').value    = today();
+    document.getElementById('ambil-jumlah').value = '';
+    document.getElementById('ambil-ket').value    = '';
+    document.getElementById('panel-catat-bayar').style.display = 'none';
+    const panel = document.getElementById('panel-ambil-lagi');
+    panel.style.display = '';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
 
@@ -2001,6 +2029,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
     document.getElementById('bayar-tgl').value    = today();
     document.getElementById('bayar-jumlah').value = cicilan > 0 ? formatRibuan(cicilan) : '';
     document.getElementById('bayar-ket').value    = '';
+    document.getElementById('panel-ambil-lagi').style.display = 'none';
     const panel = document.getElementById('panel-catat-bayar');
     panel.style.display = '';
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2028,7 +2057,7 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
   if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   try {
     await addDoc(collection(db, 'piutang_bayar'), {
-      piutangId: piuId, jumlah, tgl,
+      piutangId: piuId, jumlah, tgl, type: 'bayar',
       ket: document.getElementById('bayar-ket').value.trim(),
       ...inputByFields(),
       createdAt: serverTimestamp(),
@@ -2036,8 +2065,10 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
     // Cek apakah sudah lunas
     const p = piutangData.find(x => x.id === piuId);
     if (p) {
-      const totalBayarBaru = piutangBayar.filter(b => b.piutangId === piuId).reduce((a, b) => a + Number(b.jumlah||0), 0) + jumlah;
-      if (totalBayarBaru >= Number(p.jumlah || 0)) {
+      const { dibayar, diambil } = piutangStats(piuId);
+      const totalBayarBaru = dibayar + jumlah;
+      const totalPinjaman  = Number(p.jumlah || 0) + diambil;
+      if (totalBayarBaru >= totalPinjaman) {
         await updateDoc(doc(db, 'piutang', piuId), { status: 'lunas' });
         toast('Pembayaran dicatat — Piutang LUNAS! 🎉');
       } else {
@@ -2045,6 +2076,65 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
       }
     }
     document.getElementById('panel-catat-bayar').style.display = 'none';
+  } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+});
+
+// Simpan pengambilan tambahan (ambil lagi)
+let ambilLagiId = null;
+document.getElementById('tbody-piutang').addEventListener('click', e => {}, { capture: true });
+
+document.getElementById('panel-catat-bayar').insertAdjacentHTML('afterend', `
+  <div id="panel-ambil-lagi" class="form-card" style="display:none;margin-top:16px;border-top-color:#f59e0b">
+    <h3 id="panel-ambil-title">Catat Pengambilan Uang</h3>
+    <input type="hidden" id="ambil-piutang-id" />
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Tanggal Ambil</label>
+        <input type="date" id="ambil-tgl" />
+      </div>
+      <div class="form-group">
+        <label>Jumlah Diambil (Rp)</label>
+        <input type="text" inputmode="numeric" id="ambil-jumlah" placeholder="0" />
+      </div>
+      <div class="form-group">
+        <label>Keterangan</label>
+        <input type="text" id="ambil-ket" placeholder="Opsional" />
+      </div>
+    </div>
+    <button class="btn-primary" id="btn-simpan-ambil">Simpan Pengambilan</button>
+    <button class="btn-outline" id="btn-batal-ambil" style="margin-left:8px">Batal</button>
+  </div>
+`);
+
+// Daftarkan field ambil-jumlah ke auto-format
+(function() {
+  const el = document.getElementById('ambil-jumlah');
+  el.addEventListener('input', () => {
+    const raw = el.value.replace(/\./g, '').replace(/[^0-9]/g, '');
+    el.value = raw ? Number(raw).toLocaleString('id-ID') : '';
+  });
+})();
+
+document.getElementById('btn-batal-ambil').addEventListener('click', () => {
+  document.getElementById('panel-ambil-lagi').style.display = 'none';
+  ambilLagiId = null;
+});
+
+document.getElementById('btn-simpan-ambil').addEventListener('click', async () => {
+  const piuId  = document.getElementById('ambil-piutang-id').value;
+  const jumlah = parseRibuan(document.getElementById('ambil-jumlah').value) || 0;
+  const tgl    = document.getElementById('ambil-tgl').value;
+  if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
+  try {
+    await addDoc(collection(db, 'piutang_bayar'), {
+      piutangId: piuId, jumlah, tgl, type: 'ambil',
+      ket: document.getElementById('ambil-ket').value.trim(),
+      ...inputByFields(),
+      createdAt: serverTimestamp(),
+    });
+    toast('Pengambilan berhasil dicatat ✓');
+    document.getElementById('panel-ambil-lagi').style.display = 'none';
+    ambilLagiId = null;
   } catch (e) { toast('Gagal: ' + e.message, 'error'); }
 });
 
