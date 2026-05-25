@@ -11,6 +11,23 @@ td,
   font-variant-numeric: tabular-nums lining-nums;
 }
 
+/* Kurangi bobot dan perbaiki spasi angka di card */
+.card-value {
+  font-weight: 700 !important;
+  letter-spacing: .5px !important;
+  font-size: 22px !important;
+}
+
+.budget-widget-value {
+  font-weight: 700 !important;
+  letter-spacing: .3px !important;
+}
+
+.tfoot-value {
+  font-weight: 700 !important;
+  letter-spacing: .3px !important;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
