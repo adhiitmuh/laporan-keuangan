@@ -73,6 +73,7 @@ let anggaranData    = [];  // anggaran non-PO
 let piutangData     = [];  // piutang (uang dipinjamkan)
 let piutangBayar    = [];  // riwayat pembayaran piutang
 let mutasiData      = [];  // transfer internal tunai ↔ rekening
+let kategoriData    = [];  // kategori (sistem + custom + pending)
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
 let bayarPembelianId   = null; // id pembelian yang sedang dikonfirmasi bayar
@@ -113,16 +114,49 @@ function inputByBadge(item) {
   return `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${nama}</span>${role ? `<br><span style="font-size:10px;color:#9ca3af">${role}</span>` : ''}`;
 }
 
-const KATEGORI_LABEL = {
-  'penjualan':      'Penjualan',
-  'bayar-supplier': 'Bayar Supplier',
-  'gaji':           'Gaji Karyawan',
-  'operasional':    'Operasional',
-  'lainnya':        'Lainnya',
-  'pribadi':        'Pribadi / Pemilik',
-  'non-bisnis':     'Non-Bisnis Lainnya',
-};
-const NON_BISNIS_KAT = ['pribadi', 'non-bisnis'];
+// Kategori bawaan sistem — di-seed ke Firestore saat first-run setup.
+// Status='approved', isSystem=true (tidak bisa dihapus).
+const KATEGORI_SISTEM = [
+  { key: 'penjualan',      label: 'Penjualan',          jenis: 'pemasukan',   tipe: 'bisnis' },
+  { key: 'bayar-supplier', label: 'Bayar Supplier',     jenis: 'pengeluaran', tipe: 'bisnis' },
+  { key: 'gaji',           label: 'Gaji Karyawan',      jenis: 'pengeluaran', tipe: 'bisnis' },
+  { key: 'operasional',    label: 'Operasional',        jenis: 'pengeluaran', tipe: 'bisnis' },
+  { key: 'lainnya',        label: 'Lainnya',            jenis: 'both',        tipe: 'bisnis' },
+  { key: 'pribadi',        label: 'Pribadi / Pemilik',  jenis: 'pengeluaran', tipe: 'non-bisnis' },
+  { key: 'non-bisnis',     label: 'Non-Bisnis Lainnya', jenis: 'pengeluaran', tipe: 'non-bisnis' },
+];
+
+// Fallback label map (kalau kategoriData belum loaded)
+const KATEGORI_LABEL_FALLBACK = Object.fromEntries(KATEGORI_SISTEM.map(k => [k.key, k.label]));
+
+// Dynamic helpers — pakai kategoriData (Firestore), fallback ke sistem
+function getKategoriLabel(key) {
+  const found = kategoriData.find(k => k.key === key && k.status === 'approved');
+  return found?.label || KATEGORI_LABEL_FALLBACK[key] || key;
+}
+function isKategoriNonBisnis(key) {
+  const found = kategoriData.find(k => k.key === key);
+  if (found) return found.tipe === 'non-bisnis';
+  // fallback ke kategori sistem
+  return KATEGORI_SISTEM.find(k => k.key === key)?.tipe === 'non-bisnis';
+}
+function approvedKategori() {
+  return kategoriData.filter(k => k.status === 'approved');
+}
+function pendingKategori() {
+  return kategoriData.filter(k => k.status === 'pending');
+}
+
+// Seed kategori sistem ke Firestore (idempotent — pakai setDoc by key)
+async function seedKategoriSistem() {
+  for (const k of KATEGORI_SISTEM) {
+    await setDoc(doc(db, 'kategori', k.key), {
+      key: k.key, label: k.label, jenis: k.jenis, tipe: k.tipe,
+      status: 'approved', isSystem: true,
+      createdAt: serverTimestamp(),
+    }, { merge: true });
+  }
+}
 
 function toast(msg, type = 'success') {
   const el = document.getElementById('toast');
@@ -190,6 +224,10 @@ function applyRoleUI(role) {
   document.querySelectorAll('.col-approval').forEach(el => {
     el.style.display = canApprove ? '' : 'none';
   });
+
+  // Tombol "Ajukan Kategori" — hanya admin/pengurus/kasir (bukan pengawas)
+  const btnAjukan = document.getElementById('btn-ajukan-kategori');
+  if (btnAjukan) btnAjukan.style.display = ['admin', 'pengurus', 'kasir'].includes(role) ? '' : 'none';
 }
 
 // Helper: apakah role saat ini boleh approve
@@ -250,15 +288,25 @@ async function checkFirstRun() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // SETUP SCREEN (admin pertama)
 // ═══════════════════════════════════════════════════════════════════════════════
+// Validasi format username
+const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
+
+// Cek apakah username sudah dipakai (kembalikan dokumen user yang pakai, atau null)
+async function findUserByUsername(uname) {
+  const snap = await getDocs(query(collection(db, 'users')));
+  return snap.docs.find(d => d.data().username === uname)?.data() || null;
+}
+
 document.getElementById('btn-setup').addEventListener('click', async () => {
   const nama     = document.getElementById('setup-nama').value.trim();
+  const username = document.getElementById('setup-username').value.trim().toLowerCase();
   const email    = document.getElementById('setup-email').value.trim();
   const password = document.getElementById('setup-password').value;
   const errEl    = document.getElementById('setup-error');
-  const loadEl   = document.getElementById('setup-loading');
 
   errEl.classList.add('hidden');
-  if (!nama || !email || !password) { errEl.textContent = 'Semua field wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (!nama || !username || !email || !password) { errEl.textContent = 'Semua field wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (!USERNAME_REGEX.test(username)) { errEl.textContent = 'Username 3-20 karakter, hanya huruf kecil/angka/underscore.'; errEl.classList.remove('hidden'); return; }
   if (password.length < 6) { errEl.textContent = 'Password minimal 6 karakter.'; errEl.classList.remove('hidden'); return; }
 
   hideEl('btn-setup');
@@ -268,14 +316,16 @@ document.getElementById('btn-setup').addEventListener('click', async () => {
     isSettingUp = true;
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await setDoc(doc(db, 'users', cred.user.uid), {
-      uid: cred.user.uid, nama, email, role: 'admin', active: true,
+      uid: cred.user.uid, nama, username, email, role: 'admin', active: true,
       createdAt: serverTimestamp(),
     });
     await setDoc(doc(db, 'meta', 'config'), { initialized: true });
+    // Seed kategori sistem
+    await seedKategoriSistem();
     isSettingUp = false;
     // Trigger manual karena onAuthStateChanged sudah lewat
     currentUser     = cred.user;
-    currentUserData = { uid: cred.user.uid, nama, email, role: 'admin', active: true };
+    currentUserData = { uid: cred.user.uid, nama, username, email, role: 'admin', active: true };
     currentRole     = 'admin';
     setUserBadge(currentUserData);
     applyRoleUI('admin');
@@ -300,17 +350,27 @@ document.getElementById('login-password').addEventListener('keydown', e => {
 });
 
 async function doLogin() {
-  const email    = document.getElementById('login-email').value.trim();
-  const password = document.getElementById('login-password').value;
-  const errEl    = document.getElementById('login-error');
+  const identifier = document.getElementById('login-email').value.trim();
+  const password   = document.getElementById('login-password').value;
+  const errEl      = document.getElementById('login-error');
   errEl.classList.add('hidden');
 
-  if (!email || !password) { errEl.textContent = 'Email dan password wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (!identifier || !password) { errEl.textContent = 'Username/Email dan password wajib diisi.'; errEl.classList.remove('hidden'); return; }
 
   hideEl('btn-login');
   showEl('login-loading');
 
   try {
+    let email = identifier;
+    // Kalau bukan email (tidak ada '@'), lookup email dari username
+    if (!identifier.includes('@')) {
+      const uname = identifier.toLowerCase();
+      const userDoc = await findUserByUsername(uname);
+      if (!userDoc || !userDoc.email) {
+        throw { code: 'auth/user-not-found' };
+      }
+      email = userDoc.email;
+    }
     await signInWithEmailAndPassword(auth, email, password);
     // onAuthStateChanged handle selanjutnya — termasuk cek active
   } catch (e) {
@@ -469,6 +529,22 @@ function startListeners() {
     piutangBayar = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPiutang();
     renderDashboard();
+  }));
+
+  // kategori (dinamis: sistem + custom + pending)
+  unsubs.push(onSnapshot(collection(db, 'kategori'), async snap => {
+    kategoriData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Auto-seed: kalau kategori sistem belum ada (database lama), seed sekarang (admin only)
+    if (currentRole === 'admin' && KATEGORI_SISTEM.some(k => !kategoriData.find(x => x.key === k.key))) {
+      try { await seedKategoriSistem(); } catch {}
+    }
+    populateKategoriSelect();
+    renderPendingKategori();
+    renderKategoriAktif();
+    updatePendingKategoriBadge();
+    // Re-render halaman yang bergantung ke label kategori
+    renderKasir();
+    renderLaporanIfActive();
   }));
 
   // settings (saldo awal)
@@ -1137,8 +1213,8 @@ function renderKasir(filter = {}) {
       const jenisBadge = k.jenis === 'pemasukan'
         ? '<span class="badge badge-pemasukan">Pemasukan</span>'
         : '<span class="badge badge-pengeluaran">Pengeluaran</span>';
-      const isNonBisnis = NON_BISNIS_KAT.includes(k.kategori);
-      const katLabel    = KATEGORI_LABEL[k.kategori] || k.kategori;
+      const isNonBisnis = isKategoriNonBisnis(k.kategori);
+      const katLabel    = getKategoriLabel(k.kategori);
       const nbTag       = isNonBisnis ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : '';
       const tr = document.createElement('tr');
       if (isNonBisnis) tr.classList.add('row-non-bisnis');
@@ -1239,8 +1315,8 @@ function renderLaporan() {
   const totalBeli     = beliBulan.reduce((a, p) => a + Number(p.total || 0), 0);
   const totalMasuk    = kasirBulan.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const keluarSemua   = kasirBulan.filter(k => k.jenis === 'pengeluaran');
-  const keluarBisnis  = keluarSemua.filter(k => !NON_BISNIS_KAT.includes(k.kategori));
-  const keluarNonBisnis = keluarSemua.filter(k => NON_BISNIS_KAT.includes(k.kategori));
+  const keluarBisnis  = keluarSemua.filter(k => !isKategoriNonBisnis(k.kategori));
+  const keluarNonBisnis = keluarSemua.filter(k => isKategoriNonBisnis(k.kategori));
   const totalKeluar         = keluarSemua.reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalKeluarBisnis   = keluarBisnis.reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalKeluarNonBisnis= keluarNonBisnis.reduce((a, k) => a + Number(k.jumlah || 0), 0);
@@ -1282,7 +1358,7 @@ function renderLaporan() {
   html += `<div class="laporan-row"><span><strong>Pengeluaran Bisnis</strong></span></div>`;
   if (Object.keys(keluarBisnisKat).length) {
     Object.entries(keluarBisnisKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${KATEGORI_LABEL[kat] || kat}</span><span class="text-red">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${getKategoriLabel(kat)}</span><span class="text-red">${rupiah(val)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran bisnis</span><span>Rp 0</span></div>`;
@@ -1291,7 +1367,7 @@ function renderLaporan() {
   html += `<div class="laporan-row" style="margin-top:8px"><span><strong>Pengeluaran Non-Bisnis</strong></span></div>`;
   if (Object.keys(keluarNonBisnisKat).length) {
     Object.entries(keluarNonBisnisKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${KATEGORI_LABEL[kat] || kat}</span><span class="text-amber">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${getKategoriLabel(kat)}</span><span class="text-amber">${rupiah(val)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran non-bisnis</span><span>Rp 0</span></div>`;
@@ -1357,7 +1433,7 @@ function renderUsers() {
   const tbody = document.getElementById('tbody-users');
   if (!tbody) return;
   if (!users.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Belum ada data pengguna</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">Belum ada data pengguna</td></tr>`;
     return;
   }
   tbody.innerHTML = '';
@@ -1366,6 +1442,9 @@ function renderUsers() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${u.nama || '-'}</strong></td>
+      <td>${u.username
+        ? `<code style="background:var(--brand-light);color:var(--brand);padding:2px 8px;border-radius:4px;font-size:12px">${u.username}</code>`
+        : '<span class="text-muted-sm">–</span>'}</td>
       <td>${u.email}</td>
       <td><span class="role-badge role-${u.role}">${u.role}</span></td>
       <td>${u.active !== false
@@ -1387,26 +1466,32 @@ function renderUsers() {
 }
 
 document.getElementById('btn-simpan-user').addEventListener('click', async () => {
+  if (currentRole !== 'admin') { toast('Hanya Admin yang bisa membuat user', 'error'); return; }
   const nama     = document.getElementById('usr-nama').value.trim();
+  const username = document.getElementById('usr-username').value.trim().toLowerCase();
   const email    = document.getElementById('usr-email').value.trim();
   const password = document.getElementById('usr-password').value;
   const role     = document.getElementById('usr-role').value;
 
-  if (!nama || !email || !password) { toast('Nama, email, dan password wajib diisi', 'error'); return; }
+  if (!nama || !username || !email || !password) { toast('Semua field wajib diisi', 'error'); return; }
+  if (!USERNAME_REGEX.test(username)) { toast('Username 3-20 karakter, huruf kecil/angka/underscore', 'error'); return; }
   if (password.length < 6) { toast('Password minimal 6 karakter', 'error'); return; }
+
+  // Cek username unique
+  if (users.some(u => u.username === username)) { toast(`Username "${username}" sudah dipakai`, 'error'); return; }
 
   try {
     // Gunakan secondary app agar admin tidak ter-logout
     const secAuth = getSecondaryAuth();
     const cred    = await createUserWithEmailAndPassword(secAuth, email, password);
     await setDoc(doc(db, 'users', cred.user.uid), {
-      uid: cred.user.uid, nama, email, role, active: true,
+      uid: cred.user.uid, nama, username, email, role, active: true,
       createdAt: serverTimestamp(),
     });
     // Logout dari secondary app (supaya bersih)
     await signOut(secAuth);
 
-    ['usr-nama', 'usr-email', 'usr-password'].forEach(id => { document.getElementById(id).value = ''; });
+    ['usr-nama', 'usr-username', 'usr-email', 'usr-password'].forEach(id => { document.getElementById(id).value = ''; });
     toast(`Pengguna ${nama} berhasil dibuat`);
   } catch (e) {
     toast('Gagal membuat user: ' + friendlyError(e.code), 'error');
@@ -1428,6 +1513,244 @@ document.getElementById('tbody-users').addEventListener('click', async e => {
     }
   }, action);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KATEGORI — populate select kas, ajukan, approve, render daftar
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Populate dropdown kas-kategori dengan kategori approved sesuai jenis
+function populateKategoriSelect() {
+  const sel = document.getElementById('kas-kategori');
+  if (!sel) return;
+  const currentJenis = document.getElementById('kas-jenis')?.value || 'pemasukan';
+  const list = approvedKategori().filter(k => k.jenis === currentJenis || k.jenis === 'both');
+
+  // Group: bisnis dulu, lalu non-bisnis
+  const bisnis    = list.filter(k => k.tipe !== 'non-bisnis');
+  const nonBisnis = list.filter(k => k.tipe === 'non-bisnis');
+
+  const prevValue = sel.value;
+  sel.innerHTML = '';
+  if (bisnis.length) {
+    const og = document.createElement('optgroup');
+    og.label = '── Bisnis ──';
+    bisnis.forEach(k => {
+      const o = document.createElement('option');
+      o.value = k.key; o.textContent = k.label;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  }
+  if (nonBisnis.length) {
+    const og = document.createElement('optgroup');
+    og.label = '── Non-Bisnis ──';
+    nonBisnis.forEach(k => {
+      const o = document.createElement('option');
+      o.value = k.key; o.textContent = '👤 ' + k.label;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  }
+  // Restore previous value kalau masih ada
+  if (prevValue && list.some(k => k.key === prevValue)) sel.value = prevValue;
+  // Trigger supplier-wrap toggle
+  document.getElementById('kas-supplier-wrap').style.display =
+    sel.value === 'bayar-supplier' ? '' : 'none';
+}
+
+// Helper: re-render laporan kalau halaman laporan sedang aktif
+function renderLaporanIfActive() {
+  if (document.getElementById('page-laporan')?.classList.contains('active')) {
+    try { renderLaporan(); } catch {}
+  }
+}
+
+// ── Tombol "Ajukan Kategori Baru" ──
+document.getElementById('btn-ajukan-kategori')?.addEventListener('click', () => {
+  if (!['admin', 'pengurus', 'kasir'].includes(currentRole)) return;
+  ['kat-label', 'kat-ket'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('kat-jenis').value = 'pengeluaran';
+  document.getElementById('kat-tipe').value  = 'bisnis';
+  document.getElementById('kat-error').classList.add('hidden');
+  document.getElementById('modal-kategori').classList.remove('hidden');
+});
+
+['btn-kat-close', 'btn-kat-cancel'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => {
+    document.getElementById('modal-kategori').classList.add('hidden');
+  });
+});
+
+document.getElementById('btn-kat-submit')?.addEventListener('click', async () => {
+  const label = document.getElementById('kat-label').value.trim();
+  const jenis = document.getElementById('kat-jenis').value;
+  const tipe  = document.getElementById('kat-tipe').value;
+  const ket   = document.getElementById('kat-ket').value.trim();
+  const errEl = document.getElementById('kat-error');
+  errEl.classList.add('hidden');
+
+  if (!label) { errEl.textContent = 'Nama kategori wajib diisi.'; errEl.classList.remove('hidden'); return; }
+
+  // Generate key dari label (lowercase, alphanumeric+dash)
+  const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  if (!key) { errEl.textContent = 'Nama kategori tidak valid.'; errEl.classList.remove('hidden'); return; }
+  if (kategoriData.some(k => k.key === key)) { errEl.textContent = 'Kategori dengan nama serupa sudah ada.'; errEl.classList.remove('hidden'); return; }
+
+  // Admin auto-approve, lainnya pending
+  const status = currentRole === 'admin' ? 'approved' : 'pending';
+
+  try {
+    await setDoc(doc(db, 'kategori', key), {
+      key, label, jenis, tipe, ket,
+      status,
+      isSystem: false,
+      pengajuId:   currentUser?.uid || '',
+      pengajuNama: currentUserData?.nama || '',
+      pengajuRole: currentRole || '',
+      createdAt: serverTimestamp(),
+    });
+    document.getElementById('modal-kategori').classList.add('hidden');
+    toast(status === 'approved'
+      ? `Kategori "${label}" berhasil dibuat`
+      : `Pengajuan "${label}" terkirim, menunggu approval Admin`);
+  } catch (e) {
+    errEl.textContent = 'Gagal menyimpan: ' + (e.message || e.code);
+    errEl.classList.remove('hidden');
+  }
+});
+
+// ── Render tabel pending kategori (Admin) ──
+function renderPendingKategori() {
+  const tbody = document.getElementById('tbody-pending-kategori');
+  if (!tbody) return;
+  const list = pendingKategori();
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">Tidak ada pengajuan</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  list.forEach(k => {
+    const tgl = k.createdAt?.toDate ? k.createdAt.toDate().toLocaleDateString('id-ID') : '–';
+    const jenisLabel = k.jenis === 'pemasukan' ? 'Pemasukan' : k.jenis === 'pengeluaran' ? 'Pengeluaran' : 'Keduanya';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${tgl}</td>
+      <td><strong>${k.label}</strong>${k.tipe === 'non-bisnis' ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
+      <td>${jenisLabel}</td>
+      <td><span style="font-size:12px;font-weight:600">${k.pengajuNama || '–'}</span><br><span style="font-size:10px;color:#9ca3af">${k.pengajuRole || ''}</span></td>
+      <td>${k.ket || '<span class="text-muted-sm">–</span>'}</td>
+      <td>
+        <button class="btn-sm btn-sm-green" data-approve-kat="${k.key}">Approve</button>
+        <button class="btn-sm btn-sm-red" data-reject-kat="${k.key}">Tolak</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Render tabel kategori aktif (Admin) ──
+function renderKategoriAktif() {
+  const tbody = document.getElementById('tbody-kategori-aktif');
+  if (!tbody) return;
+  const list = approvedKategori();
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Belum ada kategori aktif</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  list.forEach(k => {
+    const jenisLabel = k.jenis === 'pemasukan' ? 'Pemasukan' : k.jenis === 'pengeluaran' ? 'Pengeluaran' : 'Keduanya';
+    const tipeBadge = k.tipe === 'non-bisnis'
+      ? '<span class="badge badge-non-bisnis">Non-Bisnis</span>'
+      : '<span class="badge badge-lunas">Bisnis</span>';
+    const sumber = k.isSystem ? '<span class="text-muted-sm">🔒 Sistem</span>' : `<span style="font-size:12px">👤 ${k.pengajuNama || '–'}</span>`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${k.label}</strong></td>
+      <td>${jenisLabel}</td>
+      <td>${tipeBadge}</td>
+      <td>${sumber}</td>
+      <td>${k.isSystem
+        ? '<em style="color:var(--text-muted);font-size:12px">Terkunci</em>'
+        : `<button class="btn-sm btn-sm-red" data-del-kat="${k.key}">Hapus</button>`}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Handler Approve / Tolak / Hapus kategori ──
+document.getElementById('tbody-pending-kategori')?.addEventListener('click', async e => {
+  const approveKey = e.target.dataset.approveKat;
+  const rejectKey  = e.target.dataset.rejectKat;
+  if (!approveKey && !rejectKey) return;
+  if (currentRole !== 'admin') { toast('Hanya Admin yang bisa approval', 'error'); return; }
+  const key = approveKey || rejectKey;
+  const k = kategoriData.find(x => x.key === key);
+  if (!k) return;
+  try {
+    if (approveKey) {
+      await updateDoc(doc(db, 'kategori', key), {
+        status: 'approved',
+        approverId:   currentUser.uid,
+        approverNama: currentUserData?.nama || '',
+        approvedAt:   serverTimestamp(),
+      });
+      toast(`Kategori "${k.label}" disetujui`);
+    } else {
+      // Tolak → hapus saja agar key bisa diajukan ulang
+      await deleteDoc(doc(db, 'kategori', key));
+      toast(`Pengajuan "${k.label}" ditolak`);
+    }
+  } catch (err) {
+    toast('Gagal: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('tbody-kategori-aktif')?.addEventListener('click', async e => {
+  const key = e.target.dataset.delKat;
+  if (!key) return;
+  if (currentRole !== 'admin') return;
+  const k = kategoriData.find(x => x.key === key);
+  if (!k || k.isSystem) { toast('Kategori sistem tidak bisa dihapus', 'error'); return; }
+  // Cek apakah kategori dipakai
+  const dipakai = kasirData.some(r => r.kategori === key);
+  if (dipakai) {
+    toast('Kategori sedang dipakai transaksi, tidak bisa dihapus', 'error');
+    return;
+  }
+  confirmDelete(`Hapus kategori <strong>${k.label}</strong>?`, async () => {
+    try {
+      await deleteDoc(doc(db, 'kategori', key));
+      toast('Kategori dihapus');
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+  }, 'Hapus');
+});
+
+// Update badge pending kategori di nav Admin
+function updatePendingKategoriBadge() {
+  const count = pendingKategori().length;
+  const badge = document.getElementById('badge-pending-kategori');
+  if (badge) {
+    if (count > 0) {
+      badge.textContent = count;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+  // Nav button badge
+  const navAdmin = document.querySelector('.nav-btn[data-page="admin"]');
+  if (navAdmin) {
+    const original = navAdmin.dataset.originalText || navAdmin.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+    navAdmin.dataset.originalText = original;
+    navAdmin.textContent = count > 0 ? `${original} (${count})` : original;
+  }
+}
+
+// Re-populate dropdown kas-kategori ketika jenis berubah
+document.getElementById('kas-jenis')?.addEventListener('change', populateKategoriSelect);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GANTI PASSWORD (reauthenticate + updatePassword)
