@@ -210,16 +210,16 @@
               <input type="text" id="beli-jenis" placeholder="cth: Kain Batik, Baju, dll" />
             </div>
             <div class="form-group">
-              <label>Jumlah / Qty</label>
+              <label>Total Nota (Rp) <span style="color:#ef4444">*</span></label>
+              <input type="text" inputmode="numeric" id="beli-total" placeholder="0" />
+            </div>
+            <div class="form-group">
+              <label>Qty <span style="color:#9ca3af;font-weight:400">(opsional)</span></label>
               <input type="text" inputmode="numeric" id="beli-qty" placeholder="0" />
             </div>
             <div class="form-group">
-              <label>Harga Satuan (Rp)</label>
+              <label>Harga Satuan <span style="color:#9ca3af;font-weight:400">(opsional)</span></label>
               <input type="text" inputmode="numeric" id="beli-harga" placeholder="0" />
-            </div>
-            <div class="form-group">
-              <label>Total (otomatis)</label>
-              <input type="text" id="beli-total" readonly placeholder="Rp 0" />
             </div>
             <div class="form-group">
               <label>Cara Bayar</label>
@@ -232,6 +232,14 @@
             <div class="form-group">
               <label>Keterangan</label>
               <input type="text" id="beli-ket" placeholder="Opsional" />
+            </div>
+            <div class="form-group">
+              <label>Foto Nota <span style="color:#9ca3af;font-weight:400">(opsional)</span></label>
+              <input type="file" id="beli-foto" accept="image/*,application/pdf" style="font-size:13px;width:100%" />
+            </div>
+            <div class="form-group">
+              <label>Link Nota <span style="color:#9ca3af;font-weight:400">(opsional)</span></label>
+              <input type="url" id="beli-link" placeholder="https://..." style="font-size:13px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;outline:none" />
             </div>
           </div>
           <button class="btn-primary" id="btn-simpan-beli">Simpan Pembelian</button>
@@ -254,7 +262,8 @@
                 <th>Jenis Barang</th>
                 <th>Qty</th>
                 <th>Harga Satuan</th>
-                <th>Total</th>
+                <th>Total Nota</th>
+                <th>Nota</th>
                 <th>Cara Bayar</th>
                 <th>Keterangan</th>
                 <th>Diinput Oleh</th>
@@ -266,7 +275,7 @@
             <tbody id="tbody-pembelian"></tbody>
             <tfoot>
               <tr>
-                <td colspan="5" class="tfoot-label">TOTAL</td>
+                <td colspan="6" class="tfoot-label">TOTAL</td>
                 <td id="tfoot-pembelian-total" class="tfoot-value"></td>
                 <td colspan="6"></td>
               </tr>

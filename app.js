@@ -99,7 +99,7 @@ const monthOf = d => (d ? String(d).slice(0, 7) : '');
 
 // Auto-format input angka dengan titik ribuan saat user mengetik
 const RIBUAN_IDS = [
-  'beli-qty','beli-harga','kas-jumlah','ang-target',
+  'beli-qty','beli-harga','beli-total','kas-jumlah','ang-target',
   'piu-jumlah','piu-cicilan','bayar-jumlah','mut-jumlah',
   'saldo-awal-tunai','rek-saldo-awal','kas-piu-cicilan',
 ];
@@ -843,7 +843,9 @@ document.getElementById('btn-simpan-mutasi').addEventListener('click', async () 
 function calcBeliTotal() {
   const qty   = parseRibuan(document.getElementById('beli-qty').value) || 0;
   const harga = parseRibuan(document.getElementById('beli-harga').value) || 0;
-  document.getElementById('beli-total').value = rupiah(qty * harga);
+  if (qty && harga) {
+    document.getElementById('beli-total').value = formatRibuan(qty * harga);
+  }
 }
 document.getElementById('beli-qty').addEventListener('input', calcBeliTotal);
 document.getElementById('beli-harga').addEventListener('input', calcBeliTotal);
@@ -857,7 +859,7 @@ function renderPembelian(filter = {}) {
   data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-note">Belum ada data pembelian</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="empty-note">Belum ada data pembelian</td></tr>`;
     setEl('tfoot-pembelian-total', rupiah(0));
     return;
   }
@@ -885,6 +887,12 @@ function renderPembelian(filter = {}) {
       ? '<span class="badge badge-approval-no">✗ Ditolak</span>'
       : '<span class="badge badge-approval-wait">⏳ Menunggu</span>';
 
+    // Nota (foto / link)
+    const notaLinks = [];
+    if (p.fotoNota)  notaLinks.push(`<a href="${p.fotoNota}"  target="_blank" class="link-bukti">📷 Foto</a>`);
+    if (p.linkNota)  notaLinks.push(`<a href="${p.linkNota}"  target="_blank" class="link-bukti">🔗 Link</a>`);
+    const notaHtml = notaLinks.length ? notaLinks.join(' ') : '<span class="text-muted-sm">–</span>';
+
     // Bukti transfer cell
     const buktiHtml = p.buktiTransfer
       ? `<a href="${p.buktiTransfer}" target="_blank" class="link-bukti">📎 Lihat</a>`
@@ -909,9 +917,10 @@ function renderPembelian(filter = {}) {
       <td>${p.tgl}</td>
       <td>${supplierName(p.supplierId)}</td>
       <td>${p.jenis}</td>
-      <td>${p.qty}</td>
-      <td>${rupiah(p.harga)}</td>
+      <td>${p.qty || '–'}</td>
+      <td>${p.harga ? rupiah(p.harga) : '–'}</td>
       <td><strong>${rupiah(p.total)}</strong></td>
+      <td>${notaHtml}</td>
       <td>${bayarBadge}</td>
       <td>${p.ket || '–'}</td>
       <td>${inputBadge}</td>
@@ -939,16 +948,33 @@ function renderPembelian(filter = {}) {
 }
 
 document.getElementById('btn-simpan-beli').addEventListener('click', async () => {
-  const tgl    = document.getElementById('beli-tgl').value;
-  const supId  = document.getElementById('beli-supplier').value;
-  const jenis  = document.getElementById('beli-jenis').value.trim();
-  const qty    = parseRibuan(document.getElementById('beli-qty').value);
-  const harga  = parseRibuan(document.getElementById('beli-harga').value);
-  if (!tgl || !supId || !jenis || !qty || !harga) { toast('Lengkapi semua field wajib', 'error'); return; }
+  const tgl   = document.getElementById('beli-tgl').value;
+  const supId = document.getElementById('beli-supplier').value;
+  const jenis = document.getElementById('beli-jenis').value.trim();
+  const total = parseRibuan(document.getElementById('beli-total').value);
+  const qty   = parseRibuan(document.getElementById('beli-qty').value) || null;
+  const harga = parseRibuan(document.getElementById('beli-harga').value) || null;
+  const link  = document.getElementById('beli-link').value.trim();
+  const file  = document.getElementById('beli-foto').files[0];
+
+  if (!tgl || !supId || !jenis || !total) { toast('Tanggal, supplier, jenis, dan total wajib diisi', 'error'); return; }
+  if (link && !/^https?:\/\/.+/.test(link)) { toast('Link nota harus diawali https:// atau http://', 'error'); return; }
+
+  const btn = document.getElementById('btn-simpan-beli');
+  btn.disabled = true; btn.textContent = '⏳ Menyimpan…';
+
   try {
+    let fotoNota = null;
+    if (file) {
+      toast('Mengupload foto nota…');
+      const ref = storageRef(storage, `nota-pembelian/${Date.now()}_${file.name}`);
+      await uploadBytes(ref, file);
+      fotoNota = await getDownloadURL(ref);
+    }
+
     await addDoc(collection(db, 'pembelian'), {
-      tgl, supplierId: supId, jenis, qty, harga,
-      total: qty * harga,
+      tgl, supplierId: supId, jenis, qty, harga, total,
+      fotoNota, linkNota: link || null,
       caraBayar: document.getElementById('beli-carabayar').value,
       ket: document.getElementById('beli-ket').value.trim(),
       statusApproval: 'menunggu',
@@ -957,13 +983,15 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
       inputByNama: currentUserData?.nama || '',
       createdAt: serverTimestamp(),
     });
-    ['beli-tgl', 'beli-jenis', 'beli-qty', 'beli-harga', 'beli-ket'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('beli-total').value = '';
+    ['beli-jenis','beli-qty','beli-harga','beli-total','beli-ket','beli-link'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('beli-foto').value    = '';
     document.getElementById('beli-supplier').value = '';
-    document.getElementById('beli-tgl').value = today();
+    document.getElementById('beli-tgl').value     = today();
     toast('Pembelian berhasil disimpan, menunggu approval pengurus');
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan Pembelian';
   }
 });
 
