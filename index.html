@@ -1101,6 +1101,48 @@
     </div>
   </div>
 
+  <!-- MODAL EDIT USER -->
+  <div id="modal-edit-user" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Edit Pengguna</span>
+        <button class="modal-close" id="btn-edit-user-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="edit-user-error" class="login-error hidden" style="margin-bottom:12px"></div>
+        <input type="hidden" id="edit-user-id" />
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Nama Lengkap</label>
+          <input type="text" id="edit-user-nama" />
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Username</label>
+          <input type="text" id="edit-user-username" placeholder="huruf kecil/angka/underscore" />
+          <small style="font-size:11px;color:var(--text-muted);margin-top:2px">3–20 karakter</small>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Email</label>
+          <input type="email" id="edit-user-email" readonly style="background:#f1f5f9;color:var(--text-muted);cursor:not-allowed" />
+          <small style="font-size:11px;color:var(--text-muted);margin-top:2px">Email tidak bisa diubah</small>
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="edit-user-role">
+            <option value="kasir">Kasir</option>
+            <option value="pengurus">Pengurus</option>
+            <option value="pengawas">Pengawas</option>
+            <option value="admin">Admin</option>
+          </select>
+          <small id="edit-user-role-hint" style="font-size:11px;color:var(--text-muted);margin-top:2px;display:none">Tidak bisa ubah role diri sendiri</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="btn-edit-user-cancel">Batal</button>
+        <button class="btn-primary" id="btn-edit-user-save">Simpan</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL AJUKAN KATEGORI -->
   <div id="modal-kategori" class="modal-overlay hidden">
     <div class="modal">

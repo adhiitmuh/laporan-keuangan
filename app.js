@@ -1479,7 +1479,8 @@ function renderUsers() {
         : '<span class="badge badge-nonaktif">Nonaktif</span>'
       }</td>
       <td>
-        ${isMe ? '<em style="color:var(--text-muted);font-size:12px">Anda</em>' : `
+        <button class="btn-sm btn-sm-blue" data-edit-user="${u.id}" style="margin-right:4px">Edit</button>
+        ${isMe ? '<em style="color:var(--text-muted);font-size:12px">(Anda)</em>' : `
           <button class="btn-sm ${u.active !== false ? 'btn-sm-orange' : 'btn-sm-red'}"
             data-toggle-user="${u.id}"
             data-active="${u.active !== false ? 'true' : 'false'}">
@@ -1526,6 +1527,27 @@ document.getElementById('btn-simpan-user').addEventListener('click', async () =>
 });
 
 document.getElementById('tbody-users').addEventListener('click', async e => {
+  // Tombol Edit
+  const editId = e.target.dataset.editUser;
+  if (editId) {
+    if (currentRole !== 'admin') { toast('Hanya Admin yang bisa edit user', 'error'); return; }
+    const u = users.find(x => x.id === editId);
+    if (!u) return;
+    document.getElementById('edit-user-id').value       = u.id;
+    document.getElementById('edit-user-nama').value     = u.nama || '';
+    document.getElementById('edit-user-username').value = u.username || '';
+    document.getElementById('edit-user-email').value    = u.email || '';
+    document.getElementById('edit-user-role').value     = u.role || 'kasir';
+    document.getElementById('edit-user-error').classList.add('hidden');
+    // Cegah ubah role diri sendiri
+    const isMe = u.uid === currentUser?.uid;
+    document.getElementById('edit-user-role').disabled = isMe;
+    document.getElementById('edit-user-role-hint').style.display = isMe ? '' : 'none';
+    document.getElementById('modal-edit-user').classList.remove('hidden');
+    return;
+  }
+
+  // Tombol Toggle aktif
   const id = e.target.dataset.toggleUser;
   if (!id) return;
   const isActive = e.target.dataset.active === 'true';
@@ -1539,6 +1561,53 @@ document.getElementById('tbody-users').addEventListener('click', async e => {
       toast('Gagal memperbarui: ' + err.message, 'error');
     }
   }, action);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODAL EDIT USER
+// ═══════════════════════════════════════════════════════════════════════════════
+['btn-edit-user-close', 'btn-edit-user-cancel'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => {
+    document.getElementById('modal-edit-user').classList.add('hidden');
+  });
+});
+
+document.getElementById('btn-edit-user-save')?.addEventListener('click', async () => {
+  if (currentRole !== 'admin') { toast('Hanya Admin', 'error'); return; }
+  const id       = document.getElementById('edit-user-id').value;
+  const nama     = document.getElementById('edit-user-nama').value.trim();
+  const username = document.getElementById('edit-user-username').value.trim().toLowerCase();
+  const role     = document.getElementById('edit-user-role').value;
+  const errEl    = document.getElementById('edit-user-error');
+  errEl.classList.add('hidden');
+
+  const u = users.find(x => x.id === id);
+  if (!u) { errEl.textContent = 'User tidak ditemukan.'; errEl.classList.remove('hidden'); return; }
+  if (!nama) { errEl.textContent = 'Nama wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (username && !USERNAME_REGEX.test(username)) { errEl.textContent = 'Username 3-20 karakter, huruf kecil/angka/underscore.'; errEl.classList.remove('hidden'); return; }
+  // Cek username unique (kecuali milik user ini sendiri)
+  if (username && users.some(x => x.id !== id && x.username === username)) {
+    errEl.textContent = `Username "${username}" sudah dipakai user lain.`; errEl.classList.remove('hidden'); return;
+  }
+
+  // Cegah ubah role diri sendiri
+  const isMe = u.uid === currentUser?.uid;
+  const newRole = isMe ? u.role : role;
+
+  try {
+    const patch = { nama, username: username || null, role: newRole };
+    await updateDoc(doc(db, 'users', id), patch);
+    document.getElementById('modal-edit-user').classList.add('hidden');
+    toast(`Data pengguna ${nama} diperbarui`);
+    // Kalau yang diedit diri sendiri, update tampilan badge
+    if (isMe) {
+      currentUserData = { ...currentUserData, ...patch };
+      setUserBadge(currentUserData);
+    }
+  } catch (e) {
+    errEl.textContent = 'Gagal: ' + (e.message || e.code);
+    errEl.classList.remove('hidden');
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
