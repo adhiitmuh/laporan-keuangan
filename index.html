@@ -27,8 +27,8 @@
       <p class="login-subtitle">Masuk dengan akun Anda</p>
       <div id="login-error" class="login-error hidden"></div>
       <div class="form-group">
-        <label>Email</label>
-        <input type="email" id="login-email" placeholder="email@toko.com" autocomplete="username" />
+        <label>Username atau Email</label>
+        <input type="text" id="login-email" placeholder="username atau email@toko.com" autocomplete="username" />
       </div>
       <div class="form-group">
         <label>Password</label>
@@ -58,6 +58,11 @@
         <input type="text" id="setup-nama" placeholder="Nama lengkap" />
       </div>
       <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="setup-username" placeholder="admin" autocomplete="off" />
+        <small style="font-size:11px;color:var(--text-muted);margin-top:2px">3–20 karakter, huruf kecil, angka, underscore</small>
+      </div>
+      <div class="form-group">
         <label>Email</label>
         <input type="email" id="setup-email" placeholder="admin@toko.com" />
       </div>
@@ -81,13 +86,14 @@
     <!-- TOPBAR -->
     <header class="topbar">
       <div class="topbar-brand">
-        <span class="brand-icon">🏪</span>
-        <span class="brand-name">Laporan Keuangan Toko Harmonis Sentral</span>
+        <span class="brand-icon">🧵</span>
+        <span class="brand-name">Harmonis Sentral</span>
       </div>
       <nav class="topbar-nav" id="topbar-nav">
         <button class="nav-btn active" data-page="dashboard">📊 Dashboard</button>
         <button class="nav-btn nav-pembelian" data-page="pembelian">🛒 Pembelian</button>
         <button class="nav-btn nav-kasir" data-page="kasir">💰 Kasir</button>
+        <button class="nav-btn nav-pengajuan" data-page="pengajuan">📝 Pengajuan</button>
         <button class="nav-btn nav-supplier" data-page="supplier">🏭 Supplier</button>
         <button class="nav-btn nav-po" data-page="po">📋 PO &amp; Budget</button>
         <button class="nav-btn nav-rekening" data-page="rekening">🏦 Rekening</button>
@@ -304,21 +310,8 @@
               </select>
             </div>
             <div class="form-group">
-              <label>Kategori</label>
-              <select id="kas-kategori">
-                <optgroup label="── Bisnis ──">
-                  <option value="penjualan">Penjualan</option>
-                  <option value="bayar-supplier">Bayar Supplier</option>
-                  <option value="piutang">💳 Piutang / Pinjaman</option>
-                  <option value="gaji">Gaji Karyawan</option>
-                  <option value="operasional">Operasional</option>
-                  <option value="lainnya">Lainnya</option>
-                </optgroup>
-                <optgroup label="── Non-Bisnis ──">
-                  <option value="pribadi">👤 Pribadi / Pemilik</option>
-                  <option value="non-bisnis">📌 Non-Bisnis Lainnya</option>
-                </optgroup>
-              </select>
+              <label>Kategori <button type="button" id="btn-ajukan-kategori" class="btn-sm btn-sm-green" style="margin-left:6px;padding:2px 8px;font-size:10px">+ Ajukan Baru</button></label>
+              <select id="kas-kategori"></select>
             </div>
             <div class="form-group" id="kas-supplier-wrap" style="display:none">
               <label>Supplier (jika bayar hutang)</label>
@@ -410,6 +403,93 @@
                 <td colspan="4"></td>
               </tr>
             </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─── PENGAJUAN PENGELUARAN ─────────────────────── -->
+      <section id="page-pengajuan" class="page">
+        <h2 class="page-title">Pengajuan Pengeluaran</h2>
+
+        <!-- Form: Pengurus/Admin ajukan pengeluaran -->
+        <div class="form-card action-form" id="form-pengajuan-wrap">
+          <h3>📝 Ajukan Pengeluaran Baru</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Tanggal</label>
+              <input type="date" id="pgj-tgl" />
+            </div>
+            <div class="form-group">
+              <label>Kategori</label>
+              <select id="pgj-kategori"></select>
+            </div>
+            <div class="form-group" id="pgj-supplier-wrap" style="display:none">
+              <label>Supplier (jika bayar hutang)</label>
+              <select id="pgj-supplier">
+                <option value="">-- Pilih Supplier --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Jumlah (Rp)</label>
+              <input type="number" id="pgj-jumlah" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Via</label>
+              <select id="pgj-via">
+                <option value="tunai">Tunai</option>
+                <option value="transfer">Transfer</option>
+              </select>
+            </div>
+            <div class="form-group" id="pgj-rekening-wrap" style="display:none">
+              <label>Rekening</label>
+              <select id="pgj-rekening">
+                <option value="">-- Pilih Rekening --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Keterangan</label>
+              <input type="text" id="pgj-ket" placeholder="Untuk apa pengeluaran ini" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-simpan-pengajuan">Ajukan ke Kasir</button>
+        </div>
+
+        <!-- Tabel: pengajuan pending (Kasir/Admin konfirmasi) -->
+        <h3 class="section-title">Menunggu Konfirmasi <span id="badge-pending-pengajuan" class="badge badge-hutang hidden" style="margin-left:6px"></span></h3>
+        <div class="table-wrap">
+          <table id="tbl-pengajuan-pending">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Kategori</th>
+                <th>Supplier</th>
+                <th>Jumlah</th>
+                <th>Via</th>
+                <th>Keterangan</th>
+                <th>Diajukan Oleh</th>
+                <th class="col-pengajuan-aksi">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-pengajuan-pending"></tbody>
+          </table>
+        </div>
+
+        <!-- Tabel: riwayat semua pengajuan -->
+        <h3 class="section-title">Riwayat Pengajuan</h3>
+        <div class="table-wrap">
+          <table id="tbl-pengajuan-riwayat">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Kategori</th>
+                <th>Jumlah</th>
+                <th>Via</th>
+                <th>Diajukan</th>
+                <th>Status</th>
+                <th>Dikonfirmasi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-pengajuan-riwayat"></tbody>
           </table>
         </div>
       </section>
@@ -824,6 +904,11 @@
               <input type="text" id="usr-nama" placeholder="Nama pengguna" />
             </div>
             <div class="form-group">
+              <label>Username</label>
+              <input type="text" id="usr-username" placeholder="cth: kasir1" autocomplete="off" />
+              <small style="font-size:11px;color:var(--text-muted);margin-top:2px">3–20 karakter, huruf kecil/angka/underscore</small>
+            </div>
+            <div class="form-group">
               <label>Email</label>
               <input type="email" id="usr-email" placeholder="email@toko.com" />
             </div>
@@ -850,6 +935,7 @@
             <thead>
               <tr>
                 <th>Nama</th>
+                <th>Username</th>
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
@@ -857,6 +943,40 @@
               </tr>
             </thead>
             <tbody id="tbody-users"></tbody>
+          </table>
+        </div>
+
+        <!-- ─── APPROVAL KATEGORI ─────────────────────────── -->
+        <h3 class="section-title">Pengajuan Kategori <span id="badge-pending-kategori" class="badge badge-hutang hidden" style="margin-left:6px"></span></h3>
+        <div class="table-wrap">
+          <table id="tbl-pending-kategori">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Kategori</th>
+                <th>Jenis</th>
+                <th>Diajukan Oleh</th>
+                <th>Keterangan</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-pending-kategori"></tbody>
+          </table>
+        </div>
+
+        <h3 class="section-title">Daftar Kategori Aktif</h3>
+        <div class="table-wrap">
+          <table id="tbl-kategori-aktif">
+            <thead>
+              <tr>
+                <th>Kategori</th>
+                <th>Jenis</th>
+                <th>Tipe</th>
+                <th>Sumber</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-kategori-aktif"></tbody>
           </table>
         </div>
       </section>
@@ -1004,6 +1124,91 @@
       <div class="modal-footer">
         <button class="btn-outline" id="btn-bayar-cancel">Batal</button>
         <button class="btn-primary" id="btn-bayar-konfirm">💾 Konfirmasi Bayar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL EDIT USER -->
+  <div id="modal-edit-user" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Edit Pengguna</span>
+        <button class="modal-close" id="btn-edit-user-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="edit-user-error" class="login-error hidden" style="margin-bottom:12px"></div>
+        <input type="hidden" id="edit-user-id" />
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Nama Lengkap</label>
+          <input type="text" id="edit-user-nama" />
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Username</label>
+          <input type="text" id="edit-user-username" placeholder="huruf kecil/angka/underscore" />
+          <small style="font-size:11px;color:var(--text-muted);margin-top:2px">3–20 karakter</small>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Email</label>
+          <input type="email" id="edit-user-email" readonly style="background:#f1f5f9;color:var(--text-muted);cursor:not-allowed" />
+          <small style="font-size:11px;color:var(--text-muted);margin-top:2px">Email tidak bisa diubah</small>
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="edit-user-role">
+            <option value="kasir">Kasir</option>
+            <option value="pengurus">Pengurus</option>
+            <option value="pengawas">Pengawas</option>
+            <option value="admin">Admin</option>
+          </select>
+          <small id="edit-user-role-hint" style="font-size:11px;color:var(--text-muted);margin-top:2px;display:none">Tidak bisa ubah role diri sendiri</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="btn-edit-user-cancel">Batal</button>
+        <button class="btn-primary" id="btn-edit-user-save">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL AJUKAN KATEGORI -->
+  <div id="modal-kategori" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Ajukan Kategori Baru</span>
+        <button class="modal-close" id="btn-kat-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="kat-error" class="login-error hidden" style="margin-bottom:12px"></div>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+          Kategori baru akan menunggu approval Admin sebelum bisa digunakan.
+        </p>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Nama Kategori</label>
+          <input type="text" id="kat-label" placeholder="cth: Listrik Toko" />
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Jenis</label>
+          <select id="kat-jenis">
+            <option value="pengeluaran">Pengeluaran</option>
+            <option value="pemasukan">Pemasukan</option>
+            <option value="both">Pemasukan & Pengeluaran</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Tipe</label>
+          <select id="kat-tipe">
+            <option value="bisnis">Bisnis</option>
+            <option value="non-bisnis">Non-Bisnis</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Alasan / Keterangan (opsional)</label>
+          <input type="text" id="kat-ket" placeholder="Untuk apa kategori ini" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="btn-kat-cancel">Batal</button>
+        <button class="btn-primary" id="btn-kat-submit">Ajukan</button>
       </div>
     </div>
   </div>
