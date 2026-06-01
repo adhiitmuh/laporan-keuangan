@@ -74,6 +74,7 @@ let piutangData     = [];  // piutang (uang dipinjamkan)
 let piutangBayar    = [];  // riwayat pembayaran piutang
 let mutasiData      = [];  // transfer internal tunai ↔ rekening
 let kategoriData    = [];  // kategori (sistem + custom + pending)
+let pengajuanData   = [];  // pengajuan pengeluaran (pending/done/rejected)
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
 let bayarPembelianId   = null; // id pembelian yang sedang dikonfirmasi bayar
@@ -185,10 +186,10 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  admin:    ['dashboard', 'pembelian', 'kasir', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
-  pengurus: ['dashboard', 'pembelian', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
-  kasir:    ['kasir', 'pembelian'],
-  pengawas: ['dashboard', 'pembelian', 'kasir', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  admin:    ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
+  pengurus: ['dashboard', 'pembelian', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  kasir:    ['kasir', 'pengajuan', 'pembelian'],
+  pengawas: ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
 };
 
 function applyRoleUI(role) {
@@ -204,6 +205,17 @@ function applyRoleUI(role) {
   ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap', 'form-anggaran-wrap', 'form-piutang-wrap', 'form-mutasi-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
+  });
+
+  // Form pengajuan pengeluaran — hanya admin & pengurus (kasir tidak ajukan, hanya konfirmasi)
+  const canAjukan = role === 'admin' || role === 'pengurus';
+  const formPgj = document.getElementById('form-pengajuan-wrap');
+  if (formPgj) formPgj.style.display = canAjukan ? '' : 'none';
+
+  // Tombol konfirmasi pengajuan — hanya admin & kasir
+  const canKonfirmasi = role === 'admin' || role === 'kasir';
+  document.querySelectorAll('.col-pengajuan-aksi').forEach(el => {
+    el.style.display = canKonfirmasi ? '' : 'none';
   });
 
   // Saldo awal hanya admin & pengurus
@@ -266,6 +278,13 @@ function navigateTo(page) {
   if (page === 'rekening')  renderRekening();
   if (page === 'piutang')   renderPiutang();
   if (page === 'transfer')  renderMutasi();
+  if (page === 'pengajuan') {
+    populatePengajuanKategoriSelect();
+    const tglEl = document.getElementById('pgj-tgl');
+    if (tglEl && !tglEl.value) tglEl.value = today();
+    renderPengajuanPending();
+    renderPengajuanRiwayat();
+  }
   if (page === 'po') {
     generatePONumber().then(n => { const el = document.getElementById('po-nomor'); if (el) el.value = n; });
     if (!document.getElementById('tbody-po-items').children.length) addItemRow();
@@ -531,6 +550,14 @@ function startListeners() {
     renderDashboard();
   }));
 
+  // pengajuan pengeluaran (Pengurus → Kasir konfirmasi)
+  unsubs.push(onSnapshot(query(collection(db, 'pengajuan_kas'), orderBy('createdAt', 'desc')), snap => {
+    pengajuanData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPengajuanPending();
+    renderPengajuanRiwayat();
+    updatePendingPengajuanBadge();
+  }));
+
   // kategori (dinamis: sistem + custom + pending)
   unsubs.push(onSnapshot(collection(db, 'kategori'), async snap => {
     kategoriData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -574,8 +601,8 @@ function rekeningName(id) {
 }
 
 function populateRekeningSelects() {
-  // Dropdown kasir (pilih rekening transfer)
-  ['kas-rekening'].forEach(selId => {
+  // Dropdown kasir + pengajuan (pilih rekening transfer)
+  ['kas-rekening', 'pgj-rekening'].forEach(selId => {
     const sel = document.getElementById(selId);
     if (!sel) return;
     const prevVal = sel.value;
@@ -636,7 +663,7 @@ function supplierStats(supId) {
 }
 
 function populateSupplierSelects() {
-  ['beli-supplier', 'filter-beli-supplier', 'kas-supplier', 'filter-kas-supplier', 'po-supplier', 'filter-po-supplier'].forEach(selId => {
+  ['beli-supplier', 'filter-beli-supplier', 'kas-supplier', 'filter-kas-supplier', 'po-supplier', 'filter-po-supplier', 'pgj-supplier'].forEach(selId => {
     const sel = document.getElementById(selId);
     if (!sel) return;
     const prevVal = sel.value;
@@ -1751,6 +1778,247 @@ function updatePendingKategoriBadge() {
 
 // Re-populate dropdown kas-kategori ketika jenis berubah
 document.getElementById('kas-jenis')?.addEventListener('change', populateKategoriSelect);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PENGAJUAN PENGELUARAN — Pengurus ajukan → Kasir konfirmasi → masuk kas
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Populate dropdown kategori di form pengajuan (hanya pengeluaran)
+function populatePengajuanKategoriSelect() {
+  const sel = document.getElementById('pgj-kategori');
+  if (!sel) return;
+  const list = approvedKategori().filter(k => k.jenis === 'pengeluaran' || k.jenis === 'both');
+  const bisnis    = list.filter(k => k.tipe !== 'non-bisnis');
+  const nonBisnis = list.filter(k => k.tipe === 'non-bisnis');
+
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (bisnis.length) {
+    const og = document.createElement('optgroup');
+    og.label = '── Bisnis ──';
+    bisnis.forEach(k => {
+      const o = document.createElement('option');
+      o.value = k.key; o.textContent = k.label;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  }
+  if (nonBisnis.length) {
+    const og = document.createElement('optgroup');
+    og.label = '── Non-Bisnis ──';
+    nonBisnis.forEach(k => {
+      const o = document.createElement('option');
+      o.value = k.key; o.textContent = '👤 ' + k.label;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  }
+  if (prev && list.some(k => k.key === prev)) sel.value = prev;
+  togglePgjSupplierWrap();
+}
+
+function togglePgjSupplierWrap() {
+  const sel = document.getElementById('pgj-kategori');
+  const wrap = document.getElementById('pgj-supplier-wrap');
+  if (sel && wrap) wrap.style.display = sel.value === 'bayar-supplier' ? '' : 'none';
+}
+
+document.getElementById('pgj-kategori')?.addEventListener('change', togglePgjSupplierWrap);
+document.getElementById('pgj-via')?.addEventListener('change', function () {
+  document.getElementById('pgj-rekening-wrap').style.display =
+    this.value === 'transfer' ? '' : 'none';
+});
+
+// Submit pengajuan
+document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async () => {
+  if (!['admin', 'pengurus'].includes(currentRole)) { toast('Tidak ada akses', 'error'); return; }
+  const tgl       = document.getElementById('pgj-tgl').value;
+  const kategori  = document.getElementById('pgj-kategori').value;
+  const jumlah    = Number(document.getElementById('pgj-jumlah').value);
+  const supplierId  = kategori === 'bayar-supplier' ? document.getElementById('pgj-supplier').value : null;
+  const via         = document.getElementById('pgj-via').value;
+  const rekeningId  = via === 'transfer' ? document.getElementById('pgj-rekening').value : null;
+  const ket         = document.getElementById('pgj-ket').value.trim();
+
+  if (!tgl || !kategori || !jumlah) { toast('Tanggal, kategori, dan jumlah wajib', 'error'); return; }
+  if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier', 'error'); return; }
+  if (via === 'transfer' && !rekeningId) { toast('Pilih rekening', 'error'); return; }
+
+  try {
+    await addDoc(collection(db, 'pengajuan_kas'), {
+      tgl, kategori, jumlah,
+      supplierId:  supplierId  || null,
+      via,
+      rekeningId:  rekeningId  || null,
+      ket,
+      status: 'pending',
+      pengajuId:   currentUser.uid,
+      pengajuNama: currentUserData?.nama || '',
+      pengajuRole: currentRole || '',
+      createdAt:   serverTimestamp(),
+    });
+    // Clear form
+    ['pgj-jumlah', 'pgj-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('pgj-supplier').value = '';
+    document.getElementById('pgj-rekening').value = '';
+    document.getElementById('pgj-via').value = 'tunai';
+    document.getElementById('pgj-supplier-wrap').style.display = 'none';
+    document.getElementById('pgj-rekening-wrap').style.display = 'none';
+    document.getElementById('pgj-tgl').value = today();
+    toast('Pengajuan terkirim, menunggu konfirmasi Kasir');
+  } catch (e) {
+    toast('Gagal: ' + e.message, 'error');
+  }
+});
+
+// Render: pengajuan pending (untuk Kasir/Admin konfirmasi)
+function renderPengajuanPending() {
+  const tbody = document.getElementById('tbody-pengajuan-pending');
+  if (!tbody) return;
+  const list = pengajuanData.filter(p => p.status === 'pending');
+  const canKonfirmasi = currentRole === 'admin' || currentRole === 'kasir';
+
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-note">Tidak ada pengajuan menunggu konfirmasi</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  list.forEach(p => {
+    const katLabel = getKategoriLabel(p.kategori);
+    const isNonBisnis = isKategoriNonBisnis(p.kategori);
+    const viaLabel = p.via === 'transfer' ? rekeningName(p.rekeningId) : 'Tunai';
+    const supLabel = p.supplierId ? supplierName(p.supplierId) : '–';
+    const tr = document.createElement('tr');
+    if (isNonBisnis) tr.classList.add('row-non-bisnis');
+    tr.innerHTML = `
+      <td>${p.tgl}</td>
+      <td>${katLabel}${isNonBisnis ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
+      <td>${supLabel}</td>
+      <td class="text-red"><strong>${rupiah(p.jumlah)}</strong></td>
+      <td>${viaLabel}</td>
+      <td>${p.ket || '–'}</td>
+      <td><span style="font-size:12px;font-weight:600">${p.pengajuNama || '–'}</span><br><span style="font-size:10px;color:#9ca3af">${p.pengajuRole || ''}</span></td>
+      <td class="col-pengajuan-aksi" style="${canKonfirmasi ? '' : 'display:none'}">
+        <button class="btn-sm btn-sm-green" data-konfirmasi-pgj="${p.id}">✓ Konfirmasi</button>
+        <button class="btn-sm btn-sm-red" data-tolak-pgj="${p.id}">Tolak</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Render: riwayat semua pengajuan
+function renderPengajuanRiwayat() {
+  const tbody = document.getElementById('tbody-pengajuan-riwayat');
+  if (!tbody) return;
+  if (!pengajuanData.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-note">Belum ada pengajuan</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = '';
+  pengajuanData.forEach(p => {
+    const katLabel = getKategoriLabel(p.kategori);
+    const viaLabel = p.via === 'transfer' ? rekeningName(p.rekeningId) : 'Tunai';
+    let statusBadge = '';
+    if (p.status === 'pending')  statusBadge = '<span class="badge badge-po-pending">Pending</span>';
+    if (p.status === 'done')     statusBadge = '<span class="badge badge-lunas">✓ Disetujui</span>';
+    if (p.status === 'rejected') statusBadge = `<span class="badge badge-hutang">Ditolak</span>${p.rejectReason ? `<br><small style="color:#9ca3af">${p.rejectReason}</small>` : ''}`;
+    const konfirm = p.konfirmasiNama
+      ? `<span style="font-size:12px">${p.konfirmasiNama}</span>`
+      : '<span class="text-muted-sm">–</span>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${p.tgl}</td>
+      <td>${katLabel}</td>
+      <td><strong>${rupiah(p.jumlah)}</strong></td>
+      <td>${viaLabel}</td>
+      <td><span style="font-size:12px">${p.pengajuNama || '–'}</span></td>
+      <td>${statusBadge}</td>
+      <td>${konfirm}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Handler konfirmasi / tolak
+document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', async e => {
+  const konfId = e.target.dataset.konfirmasiPgj;
+  const tolakId = e.target.dataset.tolakPgj;
+  if (!konfId && !tolakId) return;
+  if (!['admin', 'kasir'].includes(currentRole)) { toast('Hanya Kasir/Admin yang bisa konfirmasi', 'error'); return; }
+
+  const id = konfId || tolakId;
+  const p = pengajuanData.find(x => x.id === id);
+  if (!p) return;
+
+  if (konfId) {
+    confirmDelete(`Konfirmasi pengajuan <strong>${getKategoriLabel(p.kategori)}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong>?<br>Ini akan masuk sebagai pengeluaran kas.`, async () => {
+      try {
+        // 1. Buat entry di kasir collection (pengeluaran)
+        const kasirRef = await addDoc(collection(db, 'kasir'), {
+          tgl: p.tgl,
+          jenis: 'pengeluaran',
+          kategori: p.kategori,
+          jumlah: p.jumlah,
+          supplierId: p.supplierId || null,
+          via: p.via,
+          rekeningId: p.rekeningId || null,
+          ket: p.ket || '',
+          inputBy:     currentUser.uid,
+          inputByNama: currentUserData?.nama || '',
+          inputByRole: currentRole || '',
+          sumberPengajuanId: p.id,
+          sumberPengajuanOleh: p.pengajuNama || '',
+          createdAt: serverTimestamp(),
+        });
+        // 2. Update pengajuan jadi done
+        await updateDoc(doc(db, 'pengajuan_kas', p.id), {
+          status: 'done',
+          konfirmasiId: currentUser.uid,
+          konfirmasiNama: currentUserData?.nama || '',
+          kasirDocId: kasirRef.id,
+          doneAt: serverTimestamp(),
+        });
+        toast('Pengajuan dikonfirmasi & masuk ke kas');
+      } catch (err) {
+        toast('Gagal: ' + err.message, 'error');
+      }
+    }, 'Konfirmasi');
+  } else {
+    // Tolak — minta alasan via prompt sederhana
+    const reason = prompt('Alasan penolakan (opsional):') || '';
+    try {
+      await updateDoc(doc(db, 'pengajuan_kas', p.id), {
+        status: 'rejected',
+        konfirmasiId: currentUser.uid,
+        konfirmasiNama: currentUserData?.nama || '',
+        rejectReason: reason,
+        doneAt: serverTimestamp(),
+      });
+      toast('Pengajuan ditolak');
+    } catch (err) {
+      toast('Gagal: ' + err.message, 'error');
+    }
+  }
+});
+
+// Badge angka di nav "Pengajuan" untuk kasir/admin
+function updatePendingPengajuanBadge() {
+  const count = pengajuanData.filter(p => p.status === 'pending').length;
+  const badge = document.getElementById('badge-pending-pengajuan');
+  if (badge) {
+    if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  }
+  // Nav button "Pengajuan" — tampilkan badge untuk admin/kasir (yg perlu konfirmasi)
+  const navPgj = document.querySelector('.nav-btn[data-page="pengajuan"]');
+  if (navPgj) {
+    const original = navPgj.dataset.originalText || navPgj.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+    navPgj.dataset.originalText = original;
+    const showBadge = ['admin', 'kasir'].includes(currentRole) && count > 0;
+    navPgj.textContent = showBadge ? `${original} (${count})` : original;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GANTI PASSWORD (reauthenticate + updatePassword)
