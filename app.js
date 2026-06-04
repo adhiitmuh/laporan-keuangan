@@ -2650,6 +2650,7 @@ function renderPiutang() {
       </div>
     </td>`;
     tbody.appendChild(trDetail);
+  });
 
   setEl('tfoot-piu-pinjaman', rupiah(totPinjaman));
   setEl('tfoot-piu-bayar',    rupiah(totBayar));
