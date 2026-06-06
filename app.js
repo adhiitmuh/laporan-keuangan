@@ -57,7 +57,7 @@ const harmoniConfig = {
   messagingSenderId: '825719884876',
   appId:             '1:825719884876:web:a8fd78d382e0f98cf6b8e9',
 };
-const harmoniApp = initializeApp(harmoniConfig);
+const harmoniApp = initializeApp(harmoniConfig, 'harmoni-auth');
 const auth       = getAuth(harmoniApp);
 const authDb     = getFirestore(harmoniApp);
 
