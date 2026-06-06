@@ -479,6 +479,25 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     }
     const rawData = userDoc.data();
 
+    // Cek aktif
+    if (!rawData.aktif) {
+      showScreen('login');
+      const errEl = document.getElementById('login-error');
+      errEl.textContent = 'Akun belum diaktifkan. Hubungi admin.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    // Cek akses toko — Laporan Keuangan hanya untuk owner & Harmonis Sentral
+    const tokoAllowed = ['semua', 'harmonis_sentral'];
+    if (!tokoAllowed.includes(rawData.toko)) {
+      showScreen('login');
+      const errEl = document.getElementById('login-error');
+      errEl.textContent = 'Akun ini tidak memiliki akses ke Laporan Keuangan. Buka portal Harmoni Indonesia untuk akses yang sesuai.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
     // Mapping role portal → role app keuangan
     const roleMap = { owner: 'admin', staff: 'kasir' };
     const mappedRole = roleMap[rawData.role] || rawData.role;
