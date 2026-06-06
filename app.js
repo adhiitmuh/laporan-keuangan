@@ -43,11 +43,23 @@ const firebaseConfig = {
   measurementId:     'G-0HTZZ3Z4KX',
 };
 
-// Primary app (untuk user yang sedang login)
-const app     = initializeApp(firebaseConfig);
-const auth    = getAuth(app);
-const db      = getFirestore(app);
-const storage = getStorage(app);
+// Data app — Firestore tetap di project lama
+const dataApp = initializeApp(firebaseConfig, 'data');
+const db      = getFirestore(dataApp);
+const storage = getStorage(dataApp);
+
+// Auth terpusat via harmoni-indonesia
+const harmoniConfig = {
+  apiKey:            'AIzaSyA9V5Lw40pDeAWeQKijYCkdvnag8AlEe74',
+  authDomain:        'harmoni-indonesia.firebaseapp.com',
+  projectId:         'harmoni-indonesia',
+  storageBucket:     'harmoni-indonesia.firebasestorage.app',
+  messagingSenderId: '825719884876',
+  appId:             '1:825719884876:web:a8fd78d382e0f98cf6b8e9',
+};
+const harmoniApp = initializeApp(harmoniConfig);
+const auth       = getAuth(harmoniApp);
+const authDb     = getFirestore(harmoniApp);
 
 // Secondary app (untuk buat user baru tanpa logout admin)
 let secondaryApp  = null;
@@ -326,8 +338,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 // First-run check: baca dokumen meta/config (publicly readable)
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkFirstRun() {
-  const snap = await getDoc(doc(db, 'meta', 'config'));
-  return !snap.exists() || snap.data()?.initialized !== true;
+  return false; // setup sudah dilakukan, auth dikelola portal
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -458,32 +469,24 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     return;
   }
 
-  // Ambil data user dari Firestore
+  // Ambil data user dari harmoni-indonesia (portal terpusat)
   try {
-    const userSnap = await getDocs(query(collection(db, 'users')));
-    const userDoc  = userSnap.docs.find(d => d.id === firebaseUser.uid);
-    if (!userDoc) {
-      // Data Firestore user tidak ada (mungkin setup belum selesai tulis)
-      // Tunggu sebentar lalu coba lagi dengan logout
+    const userDoc = await getDoc(doc(authDb, 'users', firebaseUser.uid));
+    if (!userDoc.exists()) {
       await signOut(auth);
       showScreen('login');
       return;
     }
-    const userData = userDoc.data();
+    const rawData = userDoc.data();
 
-    // Cek active
-    if (userData.active === false) {
-      await signOut(auth);
-      const errEl = document.getElementById('login-error');
-      errEl.textContent = 'Akun Anda telah dinonaktifkan. Hubungi Admin.';
-      errEl.classList.remove('hidden');
-      showScreen('login');
-      return;
-    }
+    // Mapping role portal → role app keuangan
+    const roleMap = { owner: 'admin', staff: 'kasir' };
+    const mappedRole = roleMap[rawData.role] || rawData.role;
+    const userData = { ...rawData, role: mappedRole, email: firebaseUser.email };
 
     currentUser     = firebaseUser;
     currentUserData = userData;
-    currentRole     = userData.role;
+    currentRole     = mappedRole;
 
     setUserBadge(userData);
     applyRoleUI(currentRole);
