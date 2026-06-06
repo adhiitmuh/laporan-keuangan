@@ -488,19 +488,22 @@ onAuthStateChanged(auth, async (firebaseUser) => {
       return;
     }
 
-    // Cek akses toko — Laporan Keuangan hanya untuk owner & Harmonis Sentral
-    const tokoAllowed = ['semua', 'harmonis_sentral'];
-    if (!tokoAllowed.includes(rawData.toko)) {
-      showScreen('login');
-      const errEl = document.getElementById('login-error');
-      errEl.textContent = 'Akun ini tidak memiliki akses ke Laporan Keuangan. Buka portal Harmoni Indonesia untuk akses yang sesuai.';
-      errEl.classList.remove('hidden');
-      return;
+    // Tentukan role: owner dapat developer, staff baca dari apps.laporan_keuangan
+    let mappedRole;
+    if (rawData.role === 'owner') {
+      mappedRole = 'developer';
+    } else {
+      const appAccess = rawData.apps?.laporan_keuangan;
+      if (!appAccess?.akses) {
+        showScreen('login');
+        const errEl = document.getElementById('login-error');
+        errEl.textContent = 'Akun ini tidak memiliki akses ke Laporan Keuangan.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      mappedRole = appAccess.role || 'kasir';
     }
 
-    // Mapping role portal → role app keuangan
-    const roleMap = { owner: 'developer', staff: 'kasir' };
-    const mappedRole = roleMap[rawData.role] || rawData.role;
     const userData = { ...rawData, role: mappedRole, email: firebaseUser.email };
 
     currentUser     = firebaseUser;
