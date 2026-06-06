@@ -94,7 +94,7 @@ let bayarPembelianId   = null; // id pembelian yang sedang dikonfirmasi bayar
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
 let currentUserData = null; // Firestore users/{uid} document data
-let currentRole     = null; // string: 'admin' | 'pengurus' | 'kasir' | 'pengawas'
+let currentRole     = null; // string: 'developer' | 'pemilik' | 'pengurus' | 'kasir'
 
 // Flag untuk mencegah onAuthStateChanged mengganggu proses setup
 let isSettingUp = false;
@@ -149,7 +149,7 @@ function inputByBadge(item) {
   const nama = item.inputByNama || item.inputBy || '';
   const role = item.inputByRole || users.find(u => u.uid === item.inputBy)?.role || '';
   if (!nama) return '<span class="text-muted-sm">–</span>';
-  const roleColor = role === 'pengurus' ? '#7c3aed' : role === 'admin' ? '#15803d' : '#2563eb';
+  const roleColor = role === 'pengurus' ? '#7c3aed' : role === 'developer' ? '#15803d' : '#2563eb';
   return `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${nama}</span>${role ? `<br><span style="font-size:10px;color:#9ca3af">${role}</span>` : ''}`;
 }
 
@@ -224,10 +224,10 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  admin:    ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
-  pengurus: ['dashboard', 'pembelian', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
-  kasir:    ['kasir', 'pengajuan', 'pembelian'],
-  pengawas: ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  developer: ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
+  pemilik:   ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  pengurus:  ['dashboard', 'pembelian', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  kasir:     ['kasir', 'pengajuan', 'pembelian'],
 };
 
 function applyRoleUI(role) {
@@ -239,26 +239,26 @@ function applyRoleUI(role) {
   });
 
   // Hide action forms for pengawas (read-only)
-  const isReadOnly = role === 'pengawas';
+  const isReadOnly = role === 'pemilik';
   ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap', 'form-anggaran-wrap', 'form-piutang-wrap', 'form-mutasi-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
   });
 
   // Form pengajuan pengeluaran — hanya admin & pengurus (kasir tidak ajukan, hanya konfirmasi)
-  const canAjukan = role === 'admin' || role === 'pengurus';
+  const canAjukan = role === 'developer' || role === 'pengurus';
   const formPgj = document.getElementById('form-pengajuan-wrap');
   if (formPgj) formPgj.style.display = canAjukan ? '' : 'none';
 
   // Tombol konfirmasi pengajuan — hanya admin & kasir
-  const canKonfirmasi = role === 'admin' || role === 'kasir';
+  const canKonfirmasi = role === 'developer' || role === 'kasir';
   document.querySelectorAll('.col-pengajuan-aksi').forEach(el => {
     el.style.display = canKonfirmasi ? '' : 'none';
   });
 
   // Saldo awal hanya admin & pengurus
   const saldoForms = ['form-saldo-tunai-wrap', 'form-rekening-wrap'];
-  const showSaldo  = role === 'admin' || role === 'pengurus';
+  const showSaldo  = role === 'developer' || role === 'pengurus';
   saldoForms.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = showSaldo ? '' : 'none';
@@ -270,19 +270,19 @@ function applyRoleUI(role) {
   });
 
   // Approval UI hanya untuk admin & pengurus
-  const canApprove = role === 'admin' || role === 'pengurus';
+  const canApprove = role === 'developer' || role === 'pengurus';
   document.querySelectorAll('.col-approval').forEach(el => {
     el.style.display = canApprove ? '' : 'none';
   });
 
   // Tombol "Ajukan Kategori" — hanya admin/pengurus/kasir (bukan pengawas)
   const btnAjukan = document.getElementById('btn-ajukan-kategori');
-  if (btnAjukan) btnAjukan.style.display = ['admin', 'pengurus', 'kasir'].includes(role) ? '' : 'none';
+  if (btnAjukan) btnAjukan.style.display = ['developer', 'pengurus', 'kasir'].includes(role) ? '' : 'none';
 }
 
 // Helper: apakah role saat ini boleh approve
 function canApprove() {
-  return currentRole === 'admin' || currentRole === 'pengurus';
+  return currentRole === 'developer' || currentRole === 'pengurus';
 }
 
 function setUserBadge(data) {
@@ -372,7 +372,7 @@ document.getElementById('btn-setup').addEventListener('click', async () => {
     isSettingUp = true;
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await setDoc(doc(db, 'users', cred.user.uid), {
-      uid: cred.user.uid, nama, username, email, role: 'admin', active: true,
+      uid: cred.user.uid, nama, username, email, role: 'developer', active: true,
       createdAt: serverTimestamp(),
     });
     await setDoc(doc(db, 'meta', 'config'), { initialized: true });
@@ -381,10 +381,10 @@ document.getElementById('btn-setup').addEventListener('click', async () => {
     isSettingUp = false;
     // Trigger manual karena onAuthStateChanged sudah lewat
     currentUser     = cred.user;
-    currentUserData = { uid: cred.user.uid, nama, username, email, role: 'admin', active: true };
-    currentRole     = 'admin';
+    currentUserData = { uid: cred.user.uid, nama, username, email, role: 'developer', active: true };
+    currentRole     = 'developer';
     setUserBadge(currentUserData);
-    applyRoleUI('admin');
+    applyRoleUI('developer');
     startListeners();
     showScreen('app');
     navigateTo('dashboard');
@@ -499,7 +499,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     }
 
     // Mapping role portal → role app keuangan
-    const roleMap = { owner: 'admin', staff: 'kasir' };
+    const roleMap = { owner: 'developer', staff: 'kasir' };
     const mappedRole = roleMap[rawData.role] || rawData.role;
     const userData = { ...rawData, role: mappedRole, email: firebaseUser.email };
 
@@ -553,7 +553,7 @@ function startListeners() {
   // users (admin only — tapi kita tetap load untuk keperluan tampil nama)
   unsubs.push(onSnapshot(query(collection(db, 'users'), orderBy('createdAt', 'asc')), snap => {
     users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (currentRole === 'admin') renderUsers();
+    if (currentRole === 'developer') renderUsers();
   }));
 
   // rekening
@@ -610,7 +610,7 @@ function startListeners() {
   unsubs.push(onSnapshot(collection(db, 'kategori'), async snap => {
     kategoriData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // Auto-seed: kalau kategori sistem belum ada (database lama), seed sekarang (admin only)
-    if (currentRole === 'admin' && KATEGORI_SISTEM.some(k => !kategoriData.find(x => x.key === k.key))) {
+    if (currentRole === 'developer' && KATEGORI_SISTEM.some(k => !kategoriData.find(x => x.key === k.key))) {
       try { await seedKategoriSistem(); } catch {}
     }
     populateKategoriSelect();
@@ -847,7 +847,7 @@ function renderSupplier() {
     return;
   }
   tbody.innerHTML = '';
-  const isReadOnly = currentRole === 'pengawas';
+  const isReadOnly = currentRole === 'pemilik';
   suppliers.forEach(s => {
     const st = supplierStats(s.id);
     const tr = document.createElement('tr');
@@ -988,7 +988,7 @@ function renderPembelian(filter = {}) {
     return;
   }
 
-  const isReadOnly   = currentRole === 'pengawas';
+  const isReadOnly   = currentRole === 'pemilik';
   const approvePerms = canApprove();
   tbody.innerHTML = '';
   let totalSum = 0;
@@ -1313,7 +1313,7 @@ function renderKasir(filter = {}) {
   data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   let masuk = 0, keluar = 0;
-  const isReadOnly = currentRole === 'pengawas';
+  const isReadOnly = currentRole === 'pemilik';
 
   if (!data.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="empty-note">Belum ada transaksi kas</td></tr>`;
@@ -1600,7 +1600,7 @@ function renderUsers() {
 }
 
 document.getElementById('btn-simpan-user').addEventListener('click', async () => {
-  if (currentRole !== 'admin') { toast('Hanya Admin yang bisa membuat user', 'error'); return; }
+  if (currentRole !== 'developer') { toast('Hanya Admin yang bisa membuat user', 'error'); return; }
   const nama     = document.getElementById('usr-nama').value.trim();
   const username = document.getElementById('usr-username').value.trim().toLowerCase();
   const email    = document.getElementById('usr-email').value.trim();
@@ -1636,7 +1636,7 @@ document.getElementById('tbody-users').addEventListener('click', async e => {
   // Tombol Edit
   const editId = e.target.dataset.editUser;
   if (editId) {
-    if (currentRole !== 'admin') { toast('Hanya Admin yang bisa edit user', 'error'); return; }
+    if (currentRole !== 'developer') { toast('Hanya Admin yang bisa edit user', 'error'); return; }
     const u = users.find(x => x.id === editId);
     if (!u) return;
     document.getElementById('edit-user-id').value       = u.id;
@@ -1679,7 +1679,7 @@ document.getElementById('tbody-users').addEventListener('click', async e => {
 });
 
 document.getElementById('btn-edit-user-save')?.addEventListener('click', async () => {
-  if (currentRole !== 'admin') { toast('Hanya Admin', 'error'); return; }
+  if (currentRole !== 'developer') { toast('Hanya Admin', 'error'); return; }
   const id       = document.getElementById('edit-user-id').value;
   const nama     = document.getElementById('edit-user-nama').value.trim();
   const username = document.getElementById('edit-user-username').value.trim().toLowerCase();
@@ -1769,7 +1769,7 @@ function renderLaporanIfActive() {
 
 // ── Tombol "Ajukan Kategori Baru" ──
 document.getElementById('btn-ajukan-kategori')?.addEventListener('click', () => {
-  if (!['admin', 'pengurus', 'kasir'].includes(currentRole)) return;
+  if (!['developer', 'pengurus', 'kasir'].includes(currentRole)) return;
   ['kat-label', 'kat-ket'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('kat-jenis').value = 'pengeluaran';
   document.getElementById('kat-tipe').value  = 'bisnis';
@@ -1799,7 +1799,7 @@ document.getElementById('btn-kat-submit')?.addEventListener('click', async () =>
   if (kategoriData.some(k => k.key === key)) { errEl.textContent = 'Kategori dengan nama serupa sudah ada.'; errEl.classList.remove('hidden'); return; }
 
   // Admin auto-approve, lainnya pending
-  const status = currentRole === 'admin' ? 'approved' : 'pending';
+  const status = currentRole === 'developer' ? 'approved' : 'pending';
 
   try {
     await setDoc(doc(db, 'kategori', key), {
@@ -1885,7 +1885,7 @@ document.getElementById('tbody-pending-kategori')?.addEventListener('click', asy
   const approveKey = e.target.dataset.approveKat;
   const rejectKey  = e.target.dataset.rejectKat;
   if (!approveKey && !rejectKey) return;
-  if (currentRole !== 'admin') { toast('Hanya Admin yang bisa approval', 'error'); return; }
+  if (currentRole !== 'developer') { toast('Hanya Admin yang bisa approval', 'error'); return; }
   const key = approveKey || rejectKey;
   const k = kategoriData.find(x => x.key === key);
   if (!k) return;
@@ -1911,7 +1911,7 @@ document.getElementById('tbody-pending-kategori')?.addEventListener('click', asy
 document.getElementById('tbody-kategori-aktif')?.addEventListener('click', async e => {
   const key = e.target.dataset.delKat;
   if (!key) return;
-  if (currentRole !== 'admin') return;
+  if (currentRole !== 'developer') return;
   const k = kategoriData.find(x => x.key === key);
   if (!k || k.isSystem) { toast('Kategori sistem tidak bisa dihapus', 'error'); return; }
   // Cek apakah kategori dipakai
@@ -2006,7 +2006,7 @@ document.getElementById('pgj-via')?.addEventListener('change', function () {
 
 // Submit pengajuan
 document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async () => {
-  if (!['admin', 'pengurus'].includes(currentRole)) { toast('Tidak ada akses', 'error'); return; }
+  if (!['developer', 'pengurus'].includes(currentRole)) { toast('Tidak ada akses', 'error'); return; }
   const tgl       = document.getElementById('pgj-tgl').value;
   const kategori  = document.getElementById('pgj-kategori').value;
   const jumlah    = Number(document.getElementById('pgj-jumlah').value);
@@ -2051,7 +2051,7 @@ function renderPengajuanPending() {
   const tbody = document.getElementById('tbody-pengajuan-pending');
   if (!tbody) return;
   const list = pengajuanData.filter(p => p.status === 'pending');
-  const canKonfirmasi = currentRole === 'admin' || currentRole === 'kasir';
+  const canKonfirmasi = currentRole === 'developer' || currentRole === 'kasir';
 
   if (!list.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-note">Tidak ada pengajuan menunggu konfirmasi</td></tr>`;
@@ -2120,7 +2120,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
   const konfId = e.target.dataset.konfirmasiPgj;
   const tolakId = e.target.dataset.tolakPgj;
   if (!konfId && !tolakId) return;
-  if (!['admin', 'kasir'].includes(currentRole)) { toast('Hanya Kasir/Admin yang bisa konfirmasi', 'error'); return; }
+  if (!['developer', 'kasir'].includes(currentRole)) { toast('Hanya Kasir/Admin yang bisa konfirmasi', 'error'); return; }
 
   const id = konfId || tolakId;
   const p = pengajuanData.find(x => x.id === id);
@@ -2190,7 +2190,7 @@ function updatePendingPengajuanBadge() {
   if (navPgj) {
     const original = navPgj.dataset.originalText || navPgj.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
     navPgj.dataset.originalText = original;
-    const showBadge = ['admin', 'kasir'].includes(currentRole) && count > 0;
+    const showBadge = ['developer', 'kasir'].includes(currentRole) && count > 0;
     navPgj.textContent = showBadge ? `${original} (${count})` : original;
   }
 }
@@ -2390,7 +2390,7 @@ function renderPO(filter = {}) {
 
   if (!data.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Belum ada Purchase Order</td></tr>'; return; }
 
-  const isReadOnly = currentRole === 'pengawas';
+  const isReadOnly = currentRole === 'pemilik';
   const statusBadge = {
     pending:    '<span class="badge badge-po-pending">Pending</span>',
     dikirim:    '<span class="badge badge-po-dikirim">Dikirim</span>',
@@ -2503,7 +2503,7 @@ function renderAnggaran() {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-note">Belum ada rencana anggaran</td></tr>';
     return;
   }
-  const isReadOnly = currentRole === 'pengawas' || currentRole === 'kasir';
+  const isReadOnly = currentRole === 'pemilik' || currentRole === 'kasir';
   tbody.innerHTML = '';
   anggaranData.forEach(a => {
     const st  = ANGGARAN_STATUS[a.status] || ANGGARAN_STATUS.rencana;
@@ -2608,7 +2608,7 @@ function renderPiutang() {
     ['tfoot-piu-pinjaman','tfoot-piu-bayar','tfoot-piu-sisa'].forEach(id => setEl(id, rupiah(0)));
     return;
   }
-  const isReadOnly = currentRole === 'pengawas';
+  const isReadOnly = currentRole === 'pemilik';
   tbody.innerHTML = '';
   let totPinjaman = 0, totBayar = 0, totSisa = 0;
 
