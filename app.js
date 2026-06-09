@@ -1106,8 +1106,7 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
       ket: document.getElementById('beli-ket').value.trim(),
       statusApproval: 'menunggu',
       buktiTransfer: null,
-      inputBy: currentUser?.uid || '',
-      inputByNama: currentUserData?.nama || '',
+      ...inputByFields(),
       createdAt: serverTimestamp(),
     });
     ['beli-jenis','beli-qty','beli-harga','beli-total','beli-ket','beli-link'].forEach(id => { document.getElementById(id).value = ''; });
@@ -1485,7 +1484,7 @@ function renderLaporan() {
   html += `<div class="laporan-row"><span><strong>Pemasukan</strong></span></div>`;
   if (Object.keys(masukKat).length) {
     Object.entries(masukKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${kat}</span><span class="text-green">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${getKategoriLabel(kat)}</span><span class="text-green">${rupiah(val)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pemasukan</span><span>Rp 0</span></div>`;
@@ -1555,6 +1554,33 @@ function renderLaporan() {
     html += `<div class="laporan-row"><span>Tidak ada pembayaran</span><span>Rp 0</span></div>`;
   }
   html += `<div class="laporan-total"><span>Total Bayar Supplier</span><span>${rupiah(totalBayarSup)}</span></div>`;
+  html += `</div>`;
+
+  // 5. Piutang
+  const piutangBulan     = piutangData.filter(p => monthOf(p.tgl) === bulan);
+  const bayarPiuBulan    = piutangBayar.filter(b => b.type !== 'ambil' && monthOf(b.tgl) === bulan);
+  const totalPiuBaru     = piutangBulan.reduce((a, p) => a + Number(p.jumlah || 0), 0);
+  const totalBayarPiu    = bayarPiuBulan.reduce((a, b) => a + Number(b.jumlah || 0), 0);
+  const piutangAktif     = piutangData.filter(p => {
+    const { dibayar, diambil } = piutangStats(p.id);
+    return dibayar < (Number(p.jumlah || 0) + diambil);
+  });
+  const totalPiuAktif    = piutangAktif.reduce((a, p) => {
+    const { dibayar, diambil } = piutangStats(p.id);
+    return a + Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
+  }, 0);
+  html += `<div class="laporan-section"><h3>5. Piutang (s/d ${namaBulan})</h3>`;
+  html += `<div class="laporan-row"><span>Piutang baru bulan ini</span><span>${rupiah(totalPiuBaru)}</span></div>`;
+  html += `<div class="laporan-row"><span>Pembayaran diterima bulan ini</span><span class="text-green">${rupiah(totalBayarPiu)}</span></div>`;
+  if (piutangAktif.length) {
+    html += `<div class="laporan-row" style="margin-top:4px"><span><strong>Piutang Masih Aktif</strong></span></div>`;
+    piutangAktif.forEach(p => {
+      const { dibayar, diambil } = piutangStats(p.id);
+      const sisa = Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${p.nama}</span><span class="text-red">${rupiah(sisa)}</span></div>`;
+    });
+  }
+  html += `<div class="laporan-total"><span>Total Piutang Belum Lunas</span><span class="text-red">${rupiah(totalPiuAktif)}</span></div>`;
   html += `</div>`;
 
   output.innerHTML = html;
@@ -2461,6 +2487,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
               caraBayar: po.caraBayar || 'hutang',
               ket: `Dari PO ${po.noPO}`,
               createdAt: serverTimestamp(),
+              ...inputByFields(),
             })
           ));
           await updateDoc(doc(db, 'po', selesaiId), { status: 'selesai' });
@@ -2935,7 +2962,7 @@ document.getElementById('btn-simpan-rek').addEventListener('click', async () => 
   const saldoAwal = parseRibuan(document.getElementById('rek-saldo-awal').value) || 0;
   if (!nama || !bank) { toast('Nama dan bank wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'rekening'), { nama, bank, noRek, saldoAwal, createdAt: serverTimestamp() });
+    await addDoc(collection(db, 'rekening'), { nama, bank, noRek, saldoAwal, createdAt: serverTimestamp(), ...inputByFields() });
     ['rek-nama', 'rek-bank', 'rek-norek', 'rek-saldo-awal'].forEach(id => { document.getElementById(id).value = ''; });
     toast('Rekening berhasil ditambahkan');
   } catch (e) {
@@ -2993,6 +3020,71 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
     return;
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BACKUP & EXPORT
+// ═══════════════════════════════════════════════════════════════════════════════
+window.exportBackupJSON = function() {
+  const backup = {
+    exportDate: new Date().toISOString(),
+    collections: {
+      suppliers, pembelian, kasirData, poData, rekening,
+      piutangData, piutangBayar,
+    },
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `LapKeu_backup_${today()}.json`;
+  a.click();
+  toast('Backup JSON berhasil diunduh');
+};
+
+window.exportExcelFinansial = function() {
+  if (typeof XLSX === 'undefined') { toast('Library Excel belum dimuat, coba lagi', 'error'); return; }
+  const wb = XLSX.utils.book_new();
+
+  const sheetKasir = XLSX.utils.json_to_sheet(kasirData.map(k => ({
+    Tanggal: k.tgl, Jenis: k.jenis, Kategori: getKategoriLabel(k.kategori),
+    'Jumlah (Rp)': k.jumlah, Keterangan: k.ket || '', 'Input Oleh': k.inputByNama || '',
+  })));
+  XLSX.utils.book_append_sheet(wb, sheetKasir, 'Transaksi Kas');
+
+  const sheetBeli = XLSX.utils.json_to_sheet(pembelian.map(p => ({
+    Tanggal: p.tgl, Supplier: supplierName(p.supplierId), Jenis: p.jenis,
+    Qty: p.qty, 'Harga (Rp)': p.harga, 'Total (Rp)': p.total,
+    'Cara Bayar': p.caraBayar, 'Input Oleh': p.inputByNama || '',
+  })));
+  XLSX.utils.book_append_sheet(wb, sheetBeli, 'Pembelian');
+
+  const sheetPiutang = XLSX.utils.json_to_sheet(piutangData.map(p => {
+    const { dibayar, diambil } = piutangStats(p.id);
+    return {
+      Tanggal: p.tgl, Nama: p.nama, 'Jumlah (Rp)': p.jumlah,
+      'Tambahan (Rp)': diambil, 'Dibayar (Rp)': dibayar,
+      'Sisa (Rp)': Math.max(0, Number(p.jumlah || 0) + diambil - dibayar),
+      Status: p.status || 'aktif', 'Input Oleh': p.inputByNama || '',
+    };
+  }));
+  XLSX.utils.book_append_sheet(wb, sheetPiutang, 'Piutang');
+
+  [sheetKasir, sheetBeli, sheetPiutang].forEach(ws => {
+    const ref = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    const cols = [];
+    for (let C = ref.s.c; C <= ref.e.c; C++) {
+      let max = 10;
+      for (let R = ref.s.r; R <= ref.e.r; R++) {
+        const cell = ws[XLSX.utils.encode_cell({r: R, c: C})];
+        if (cell?.v != null) max = Math.min(40, Math.max(max, String(cell.v).length + 2));
+      }
+      cols.push({wch: max});
+    }
+    ws['!cols'] = cols;
+  });
+
+  XLSX.writeFile(wb, `LapKeu_export_${today()}.xlsx`);
+  toast('Export Excel berhasil diunduh');
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Init default dates
