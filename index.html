@@ -881,15 +881,25 @@
 
       <!-- ─── LAPORAN ────────────────────────────────────── -->
       <section id="page-laporan" class="page">
-        <h2 class="page-title">Laporan Bulanan</h2>
+        <h2 class="page-title">Laporan Keuangan</h2>
         <div class="filter-bar">
-          <label>Pilih Bulan:</label>
-          <input type="month" id="filter-laporan-bulan" />
+          <div class="toggle-group">
+            <button class="toggle-btn active" id="btn-mode-bulanan" onclick="setLaporanMode('bulanan')">Bulanan</button>
+            <button class="toggle-btn" id="btn-mode-tahunan" onclick="setLaporanMode('tahunan')">Tahunan</button>
+          </div>
+          <span id="filter-laporan-bulanan" style="display:flex;align-items:center;gap:8px">
+            <label>Pilih Bulan:</label>
+            <input type="month" id="filter-laporan-bulan" />
+          </span>
+          <span id="filter-laporan-tahunan" style="display:none;align-items:center;gap:8px">
+            <label>Pilih Tahun:</label>
+            <select id="filter-laporan-tahun"></select>
+          </span>
           <button class="btn-primary" id="btn-generate-laporan">Tampilkan Laporan</button>
         </div>
 
         <div id="laporan-output" class="laporan-box">
-          <p class="empty-note">Pilih bulan dan klik "Tampilkan Laporan"</p>
+          <p class="empty-note">Pilih periode dan klik "Tampilkan Laporan"</p>
         </div>
       </section>
 

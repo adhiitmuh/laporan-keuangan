@@ -353,6 +353,15 @@ body {
 .filter-bar input:focus, .filter-bar select:focus { border-color: var(--brand); background: var(--white); }
 .filter-bar label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
 
+.toggle-group { display: flex; border: 1.5px solid var(--gray-border); border-radius: 8px; overflow: hidden; }
+.toggle-btn {
+  padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--gray-light); color: var(--text-muted);
+  border: none; font-family: inherit; transition: all .15s;
+}
+.toggle-btn:hover { background: #e2e8f0; color: var(--text-dark); }
+.toggle-btn.active { background: var(--brand); color: var(--white); }
+
 /* ═══════════════════════════════════════════════════════
    TABLES
 ═══════════════════════════════════════════════════════ */

@@ -1415,9 +1415,35 @@ document.getElementById('tbody-kasir').addEventListener('click', e => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // LAPORAN page
 // ═══════════════════════════════════════════════════════════════════════════════
+let laporanMode = 'bulanan';
+
+function setLaporanMode(mode) {
+  laporanMode = mode;
+  document.getElementById('btn-mode-bulanan').classList.toggle('active', mode === 'bulanan');
+  document.getElementById('btn-mode-tahunan').classList.toggle('active', mode === 'tahunan');
+  document.getElementById('filter-laporan-bulanan').style.display = mode === 'bulanan' ? 'flex' : 'none';
+  document.getElementById('filter-laporan-tahunan').style.display = mode === 'tahunan' ? 'flex' : 'none';
+  if (mode === 'tahunan') populateLaporanTahunSelect();
+  document.getElementById('laporan-output').innerHTML = '<p class="empty-note">Pilih periode dan klik "Tampilkan Laporan"</p>';
+}
+
+function populateLaporanTahunSelect() {
+  const sel = document.getElementById('filter-laporan-tahun');
+  const currentYear = new Date().getFullYear();
+  const years = new Set([String(currentYear)]);
+  kasirData.forEach(k => { if (k.tgl) years.add(String(k.tgl).slice(0, 4)); });
+  pembelian.forEach(p => { if (p.tgl) years.add(String(p.tgl).slice(0, 4)); });
+  const sorted = [...years].sort((a, b) => b.localeCompare(a));
+  const prev = sel.value;
+  sel.innerHTML = sorted.map(y => `<option value="${y}">${y}</option>`).join('');
+  if (prev && sorted.includes(prev)) sel.value = prev;
+}
+
 function renderLaporan() {
-  const bulan  = document.getElementById('filter-laporan-bulan').value;
   const output = document.getElementById('laporan-output');
+  if (laporanMode === 'tahunan') { renderLaporanTahunan(output); return; }
+
+  const bulan  = document.getElementById('filter-laporan-bulan').value;
   if (!bulan) { output.innerHTML = '<p class="empty-note">Pilih bulan dan klik "Tampilkan Laporan"</p>'; return; }
 
   const beliBulan  = pembelian.filter(p => monthOf(p.tgl) === bulan);
@@ -1530,6 +1556,129 @@ function renderLaporan() {
     html += `<div class="laporan-row"><span>Tidak ada pembayaran</span><span>Rp 0</span></div>`;
   }
   html += `<div class="laporan-total"><span>Total Bayar Supplier</span><span>${rupiah(totalBayarSup)}</span></div>`;
+  html += `</div>`;
+
+  output.innerHTML = html;
+}
+
+function renderLaporanTahunan(output) {
+  const tahun = document.getElementById('filter-laporan-tahun').value;
+  if (!tahun) { output.innerHTML = '<p class="empty-note">Pilih tahun dan klik "Tampilkan Laporan"</p>'; return; }
+
+  const beliTahun  = pembelian.filter(p => String(p.tgl || '').startsWith(tahun + '-'));
+  const kasirTahun = kasirData.filter(k => String(k.tgl || '').startsWith(tahun + '-'));
+
+  const totalBeli            = beliTahun.reduce((a, p) => a + Number(p.total || 0), 0);
+  const totalMasuk           = kasirTahun.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const keluarSemua          = kasirTahun.filter(k => k.jenis === 'pengeluaran');
+  const keluarBisnis         = keluarSemua.filter(k => !isKategoriNonBisnis(k.kategori));
+  const keluarNonBisnis      = keluarSemua.filter(k => isKategoriNonBisnis(k.kategori));
+  const totalKeluar          = keluarSemua.reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalKeluarBisnis    = keluarBisnis.reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const totalKeluarNonBisnis = keluarNonBisnis.reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const saldoBersih          = totalMasuk - totalKeluar;
+
+  const keluarBisnisKat = {};
+  keluarBisnis.forEach(k => { keluarBisnisKat[k.kategori] = (keluarBisnisKat[k.kategori] || 0) + Number(k.jumlah || 0); });
+  const keluarNonBisnisKat = {};
+  keluarNonBisnis.forEach(k => { keluarNonBisnisKat[k.kategori] = (keluarNonBisnisKat[k.kategori] || 0) + Number(k.jumlah || 0); });
+
+  const MONTHS     = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+  const MONTH_NAMES = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+  const monthlyData = MONTHS.map((m, i) => {
+    const key    = `${tahun}-${m}`;
+    const kasirM = kasirTahun.filter(k => monthOf(k.tgl) === key);
+    const masuk  = kasirM.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const keluarB  = kasirM.filter(k => k.jenis === 'pengeluaran' && !isKategoriNonBisnis(k.kategori)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const keluarNB = kasirM.filter(k => k.jenis === 'pengeluaran' && isKategoriNonBisnis(k.kategori)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const beli   = beliTahun.filter(p => monthOf(p.tgl) === key).reduce((a, p) => a + Number(p.total || 0), 0);
+    return { name: MONTH_NAMES[i], masuk, keluarB, keluarNB, keluar: keluarB + keluarNB, beli, saldo: masuk - (keluarB + keluarNB) };
+  });
+
+  const endOfYear    = `${tahun}-12`;
+  const allBeliUntil  = pembelian.filter(p => monthOf(p.tgl) <= endOfYear);
+  const allBayarUntil = kasirData.filter(k => k.kategori === 'bayar-supplier' && monthOf(k.tgl) <= endOfYear);
+  const hutangRows = suppliers.map(s => {
+    const beli  = allBeliUntil.filter(p => p.supplierId === s.id).reduce((a, p) => a + Number(p.total || 0), 0);
+    const bayar = allBayarUntil.filter(k => k.supplierId === s.id).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    return { nama: s.nama, asal: s.asal, beli, bayar, hutang: Math.max(0, beli - bayar) };
+  });
+
+  let html = `<h2 style="margin-bottom:20px;font-size:17px;font-weight:700">Laporan Keuangan Tahunan — ${tahun}</h2>`;
+
+  // 1. Ringkasan Tahunan
+  html += `<div class="laporan-section"><h3>1. Ringkasan Tahunan ${tahun}</h3>`;
+  html += `<div class="laporan-row"><span>Total Pemasukan</span><span class="text-green"><strong>${rupiah(totalMasuk)}</strong></span></div>`;
+  html += `<div class="laporan-row"><span>Total Pengeluaran Bisnis</span><span class="text-red"><strong>${rupiah(totalKeluarBisnis)}</strong></span></div>`;
+  html += `<div class="laporan-row"><span>Total Pengeluaran Non-Bisnis</span><span class="text-amber"><strong>${rupiah(totalKeluarNonBisnis)}</strong></span></div>`;
+  html += `<div class="laporan-row"><span>Total Pembelian Barang</span><span><strong>${rupiah(totalBeli)}</strong></span></div>`;
+  html += `<div class="laporan-total"><span>Saldo Bersih</span><span class="${saldoBersih >= 0 ? 'text-green' : 'text-red'}">${rupiah(saldoBersih)}</span></div>`;
+  html += `</div>`;
+
+  // 2. Total Pengeluaran per Kategori
+  html += `<div class="laporan-section"><h3>2. Total Pengeluaran per Kategori</h3>`;
+  html += `<div class="laporan-row"><span><strong>Pengeluaran Bisnis</strong></span></div>`;
+  if (Object.keys(keluarBisnisKat).length) {
+    Object.entries(keluarBisnisKat).sort((a, b) => b[1] - a[1]).forEach(([kat, val]) => {
+      const pct = totalKeluarBisnis > 0 ? ((val / totalKeluarBisnis) * 100).toFixed(1) : '0.0';
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${getKategoriLabel(kat)}</span><span class="text-red">${rupiah(val)} <small style="color:#9ca3af">(${pct}%)</small></span></div>`;
+    });
+  } else {
+    html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran bisnis</span><span>Rp 0</span></div>`;
+  }
+  html += `<div class="laporan-row"><span><em>Total Bisnis</em></span><span class="text-red"><strong>${rupiah(totalKeluarBisnis)}</strong></span></div>`;
+  if (Object.keys(keluarNonBisnisKat).length) {
+    html += `<div class="laporan-row" style="margin-top:8px"><span><strong>Pengeluaran Non-Bisnis</strong></span></div>`;
+    Object.entries(keluarNonBisnisKat).sort((a, b) => b[1] - a[1]).forEach(([kat, val]) => {
+      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${getKategoriLabel(kat)}</span><span class="text-amber">${rupiah(val)}</span></div>`;
+    });
+    html += `<div class="laporan-row"><span><em>Total Non-Bisnis</em></span><span class="text-amber"><strong>${rupiah(totalKeluarNonBisnis)}</strong></span></div>`;
+  }
+  html += `</div>`;
+
+  // 3. Rekap per Bulan
+  html += `<div class="laporan-section"><h3>3. Rekap per Bulan</h3>`;
+  html += `<div style="overflow-x:auto"><table class="tbl" style="width:100%;font-size:13px"><thead><tr>
+    <th>Bulan</th><th>Pemasukan</th><th>Keluar Bisnis</th><th>Keluar Non-Bisnis</th><th>Pembelian</th><th>Saldo</th>
+  </tr></thead><tbody>`;
+  let hasAny = false;
+  monthlyData.forEach(md => {
+    if (md.masuk === 0 && md.keluar === 0 && md.beli === 0) return;
+    hasAny = true;
+    html += `<tr>
+      <td>${md.name}</td>
+      <td class="text-green">${rupiah(md.masuk)}</td>
+      <td class="text-red">${rupiah(md.keluarB)}</td>
+      <td class="text-amber">${rupiah(md.keluarNB)}</td>
+      <td>${rupiah(md.beli)}</td>
+      <td class="${md.saldo >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(md.saldo)}</strong></td>
+    </tr>`;
+  });
+  if (!hasAny) {
+    html += `<tr><td colspan="6" style="text-align:center;color:#9ca3af">Tidak ada data di tahun ${tahun}</td></tr>`;
+  }
+  html += `<tr style="font-weight:700;border-top:2px solid #d1d5db">
+    <td>TOTAL</td>
+    <td class="text-green">${rupiah(totalMasuk)}</td>
+    <td class="text-red">${rupiah(totalKeluarBisnis)}</td>
+    <td class="text-amber">${rupiah(totalKeluarNonBisnis)}</td>
+    <td>${rupiah(totalBeli)}</td>
+    <td class="${saldoBersih >= 0 ? 'text-green' : 'text-red'}">${rupiah(saldoBersih)}</td>
+  </tr></tbody></table></div></div>`;
+
+  // 4. Posisi Hutang Supplier
+  html += `<div class="laporan-section"><h3>4. Posisi Hutang Supplier (s/d Akhir ${tahun})</h3>`;
+  if (hutangRows.length) {
+    hutangRows.forEach(r => {
+      html += `<div class="laporan-row"><span>${r.nama} (${r.asal})</span>
+        <span>Beli: ${rupiah(r.beli)} | Bayar: ${rupiah(r.bayar)} | <strong class="${r.hutang > 0 ? 'text-red' : 'text-green'}">Hutang: ${rupiah(r.hutang)}</strong></span></div>`;
+    });
+    const totalHutang = hutangRows.reduce((a, r) => a + r.hutang, 0);
+    html += `<div class="laporan-total"><span>Total Hutang</span><span class="${totalHutang > 0 ? 'text-red' : 'text-green'}">${rupiah(totalHutang)}</span></div>`;
+  } else {
+    html += `<div class="laporan-row"><span>Belum ada supplier</span><span>-</span></div>`;
+  }
   html += `</div>`;
 
   output.innerHTML = html;
