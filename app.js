@@ -1732,10 +1732,39 @@ function renderLaporanTahunan(output) {
   }
   html += `</div>`;
 
+  // 5. Piutang Tahunan
+  const piutangTahun  = piutangData.filter(p => String(p.tgl || '').startsWith(tahun + '-'));
+  const totalPiuBaru  = piutangTahun.reduce((a, p) => a + Number(p.jumlah || 0), 0);
+  const bayarPiuTahun = piutangBayar.filter(b => b.type !== 'ambil' && String(b.tgl || '').startsWith(tahun + '-'));
+  const totalBayarPiu = bayarPiuTahun.reduce((a, b) => a + Number(b.jumlah || 0), 0);
+  const piutangAktif  = piutangData.filter(p => {
+    const { dibayar, diambil } = piutangStats(p.id);
+    return dibayar < (Number(p.jumlah || 0) + diambil);
+  });
+  const totalPiuAktif = piutangAktif.reduce((a, p) => {
+    const { dibayar, diambil } = piutangStats(p.id);
+    return a + Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
+  }, 0);
+  html += `<div class="laporan-section"><h3>5. Piutang Tahun ${tahun}</h3>`;
+  html += `<div class="laporan-row"><span>Piutang baru tahun ini</span><span>${rupiah(totalPiuBaru)}</span></div>`;
+  html += `<div class="laporan-row"><span>Pembayaran diterima tahun ini</span><span class="text-green">${rupiah(totalBayarPiu)}</span></div>`;
+  if (piutangAktif.length) {
+    html += `<div class="laporan-row" style="margin-top:4px"><span><strong>Piutang Masih Aktif (semua)</strong></span></div>`;
+    piutangAktif.forEach(p => {
+      const { dibayar, diambil } = piutangStats(p.id);
+      const sisa = Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${p.nama}</span><span class="text-red">${rupiah(sisa)}</span></div>`;
+    });
+  }
+  html += `<div class="laporan-total"><span>Total Piutang Belum Lunas</span><span class="text-red">${rupiah(totalPiuAktif)}</span></div>`;
+  html += `</div>`;
+
   output.innerHTML = html;
 }
 
 document.getElementById('btn-generate-laporan').addEventListener('click', renderLaporan);
+document.getElementById('btn-mode-bulanan').addEventListener('click', () => setLaporanMode('bulanan'));
+document.getElementById('btn-mode-tahunan').addEventListener('click', () => setLaporanMode('tahunan'));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN — manajemen user
