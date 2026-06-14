@@ -1416,6 +1416,121 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
   }
 });
 
+// ── Antrian (batch input kasir) ──────────────────────────────────────────────
+let kasirAntrian = [];
+
+function getKasirFormData() {
+  const tgl      = document.getElementById('kas-tgl').value;
+  const jenis    = document.getElementById('kas-jenis').value;
+  const kategori = document.getElementById('kas-kategori').value;
+  const jumlah   = parseRibuan(document.getElementById('kas-jumlah').value);
+  const supplierId = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
+  const via        = document.getElementById('kas-via').value;
+  const rekeningId = via === 'transfer' ? document.getElementById('kas-rekening').value : null;
+  const ket        = document.getElementById('kas-ket').value.trim();
+  const piuNama    = kategori === 'piutang' ? document.getElementById('kas-piu-nama').value.trim() : '';
+  const cicilan    = kategori === 'piutang' ? (parseRibuan(document.getElementById('kas-piu-cicilan').value) || 0) : 0;
+  const tglCicilan = kategori === 'piutang' ? document.getElementById('kas-piu-tgl-cicilan').value : '';
+  return { tgl, jenis, kategori, jumlah, supplierId, via, rekeningId, ket, piuNama, cicilan, tglCicilan };
+}
+
+function validateKasirData(d) {
+  if (!d.tgl || !d.jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return false; }
+  if (d.kategori === 'bayar-supplier' && !d.supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return false; }
+  if (d.kategori === 'piutang' && !d.piuNama) { toast('Nama peminjam wajib diisi', 'error'); return false; }
+  if (d.via === 'transfer' && !d.rekeningId) { toast('Pilih rekening untuk transfer', 'error'); return false; }
+  return true;
+}
+
+function resetKasirSoftFields() {
+  ['kas-jumlah', 'kas-ket', 'kas-piu-nama', 'kas-piu-cicilan', 'kas-piu-tgl-cicilan']
+    .forEach(id => { document.getElementById(id).value = ''; });
+}
+
+function renderKasirAntrian() {
+  const wrap  = document.getElementById('kasir-antrian-wrap');
+  const tbody = document.getElementById('tbody-kasir-antrian');
+  const count = document.getElementById('kasir-antrian-count');
+  const total = document.getElementById('tfoot-antrian-total');
+  if (!kasirAntrian.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  count.textContent  = kasirAntrian.length;
+  const grand = kasirAntrian.reduce((a, d) => a + d.jumlah, 0);
+  total.textContent  = rupiah(grand);
+  tbody.innerHTML    = '';
+  kasirAntrian.forEach((d, i) => {
+    const jenisBadge = d.jenis === 'pemasukan'
+      ? '<span class="badge badge-pemasukan">Pemasukan</span>'
+      : '<span class="badge badge-pengeluaran">Pengeluaran</span>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${d.tgl}</td>
+      <td>${jenisBadge}</td>
+      <td>${getKategoriLabel(d.kategori)}${d.piuNama ? ' — ' + d.piuNama : ''}</td>
+      <td class="${d.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(d.jumlah)}</strong></td>
+      <td>${d.via === 'tunai' ? 'Tunai' : rekeningName(d.rekeningId)}</td>
+      <td>${d.ket || '-'}</td>
+      <td><button class="btn-sm btn-sm-red" data-del-antrian="${i}">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-antri-kas').addEventListener('click', () => {
+  const d = getKasirFormData();
+  if (!validateKasirData(d)) return;
+  kasirAntrian.push(d);
+  renderKasirAntrian();
+  resetKasirSoftFields();
+  toast(`Ditambahkan ke daftar (${kasirAntrian.length} item)`);
+});
+
+document.getElementById('tbody-kasir-antrian').addEventListener('click', e => {
+  const idx = e.target.dataset.delAntrian;
+  if (idx !== undefined) {
+    kasirAntrian.splice(Number(idx), 1);
+    renderKasirAntrian();
+  }
+});
+
+document.getElementById('btn-hapus-antrian-kas').addEventListener('click', () => {
+  kasirAntrian = [];
+  renderKasirAntrian();
+});
+
+document.getElementById('btn-simpan-semua-kas').addEventListener('click', async () => {
+  if (!kasirAntrian.length) return;
+  const btn = document.getElementById('btn-simpan-semua-kas');
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan…';
+  try {
+    for (const d of kasirAntrian) {
+      await addDoc(collection(db, 'kasir'), {
+        tgl: d.tgl, jenis: d.jenis, kategori: d.kategori, jumlah: d.jumlah,
+        supplierId: d.supplierId || null, via: d.via, rekeningId: d.rekeningId || null, ket: d.ket,
+        ...inputByFields(), createdAt: serverTimestamp(),
+      });
+      if (d.kategori === 'piutang' && d.piuNama) {
+        await addDoc(collection(db, 'piutang'), {
+          nama: d.piuNama, jumlah: d.jumlah, tgl: d.tgl,
+          cicilan: d.cicilan, tglCicilan: d.tglCicilan,
+          ket: d.ket || `Dicatat dari kasir ${d.tgl}`,
+          status: 'aktif', ...inputByFields(), createdAt: serverTimestamp(),
+        });
+      }
+    }
+    const n = kasirAntrian.length;
+    kasirAntrian = [];
+    renderKasirAntrian();
+    toast(`${n} transaksi berhasil disimpan ✓`);
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Simpan Semua';
+  }
+});
+
 document.getElementById('btn-filter-kas').addEventListener('click', () => {
   renderKasir({
     bulan: document.getElementById('filter-kas-bulan').value,
