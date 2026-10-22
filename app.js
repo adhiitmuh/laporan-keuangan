@@ -43,10 +43,10 @@ const firebaseConfig = {
   measurementId:     'G-0HTZZ3Z4KX',
 };
 
-// Data app — Firestore tetap di project lama
-const dataApp = initializeApp(firebaseConfig, 'data');
-const db      = getFirestore(dataApp);
-const storage = getStorage(dataApp);
+// Project lama — hanya dipakai untuk migrasi data (lihat MIGRASI DATA di bawah)
+const oldDataApp = initializeApp(firebaseConfig, 'data');
+const oldDb      = getFirestore(oldDataApp);
+const oldAuth    = getAuth(oldDataApp);
 
 // Auth terpusat via harmoni-indonesia
 const harmoniConfig = {
@@ -60,6 +60,11 @@ const harmoniConfig = {
 const harmoniApp = initializeApp(harmoniConfig, 'harmoni-auth');
 const auth       = getAuth(harmoniApp);
 const authDb     = getFirestore(harmoniApp);
+
+// Data app — Firestore & Storage di project yang sama dengan auth, supaya
+// request.auth terbawa ke rules. Semua koleksi app ini memakai prefix lk_.
+const db      = authDb;
+const storage = getStorage(harmoniApp);
 
 // Secondary app (untuk buat user baru tanpa logout admin)
 let secondaryApp  = null;
@@ -190,7 +195,7 @@ function pendingKategori() {
 // Seed kategori sistem ke Firestore (idempotent — pakai setDoc by key)
 async function seedKategoriSistem() {
   for (const k of KATEGORI_SISTEM) {
-    await setDoc(doc(db, 'kategori', k.key), {
+    await setDoc(doc(db, 'lk_kategori', k.key), {
       key: k.key, label: k.label, jenis: k.jenis, tipe: k.tipe,
       status: 'approved', isSystem: true,
       createdAt: serverTimestamp(),
@@ -349,7 +354,7 @@ const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
 // Cek apakah username sudah dipakai (kembalikan dokumen user yang pakai, atau null)
 async function findUserByUsername(uname) {
-  const snap = await getDocs(query(collection(db, 'users')));
+  const snap = await getDocs(query(collection(db, 'lk_users')));
   return snap.docs.find(d => d.data().username === uname)?.data() || null;
 }
 
@@ -371,11 +376,11 @@ document.getElementById('btn-setup').addEventListener('click', async () => {
   try {
     isSettingUp = true;
     const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await setDoc(doc(db, 'users', cred.user.uid), {
+    await setDoc(doc(db, 'lk_users', cred.user.uid), {
       uid: cred.user.uid, nama, username, email, role: 'developer', active: true,
       createdAt: serverTimestamp(),
     });
-    await setDoc(doc(db, 'meta', 'config'), { initialized: true });
+    await setDoc(doc(db, 'lk_meta', 'config'), { initialized: true });
     // Seed kategori sistem
     await seedKategoriSistem();
     isSettingUp = false;
@@ -530,7 +535,7 @@ function startListeners() {
   stopListeners();
 
   // suppliers
-  unsubs.push(onSnapshot(query(collection(db, 'suppliers'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_suppliers'), orderBy('createdAt', 'asc')), snap => {
     suppliers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     populateSupplierSelects();
     renderSupplier();
@@ -538,7 +543,7 @@ function startListeners() {
   }));
 
   // pembelian
-  unsubs.push(onSnapshot(query(collection(db, 'pembelian'), orderBy('tgl', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_pembelian'), orderBy('tgl', 'desc')), snap => {
     pembelian = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPembelian();
     renderSupplier();
@@ -546,7 +551,7 @@ function startListeners() {
   }));
 
   // kasir
-  unsubs.push(onSnapshot(query(collection(db, 'kasir'), orderBy('tgl', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_kasir'), orderBy('tgl', 'desc')), snap => {
     kasirData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderKasir();
     renderSupplier();
@@ -554,13 +559,13 @@ function startListeners() {
   }));
 
   // users (admin only — tapi kita tetap load untuk keperluan tampil nama)
-  unsubs.push(onSnapshot(query(collection(db, 'users'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_users'), orderBy('createdAt', 'asc')), snap => {
     users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (currentRole === 'developer') renderUsers();
   }));
 
   // rekening
-  unsubs.push(onSnapshot(query(collection(db, 'rekening'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_rekening'), orderBy('createdAt', 'asc')), snap => {
     rekening = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     populateRekeningSelects();
     renderRekening();
@@ -568,21 +573,21 @@ function startListeners() {
   }));
 
   // purchase orders
-  unsubs.push(onSnapshot(query(collection(db, 'po'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_po'), orderBy('createdAt', 'desc')), snap => {
     poData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPO();
     renderDashboard();
   }));
 
   // anggaran lainnya
-  unsubs.push(onSnapshot(query(collection(db, 'anggaran'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_anggaran'), orderBy('createdAt', 'desc')), snap => {
     anggaranData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderAnggaran();
     renderDashboard();
   }));
 
   // mutasi internal
-  unsubs.push(onSnapshot(query(collection(db, 'mutasi'), orderBy('tgl', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_mutasi'), orderBy('tgl', 'desc')), snap => {
     mutasiData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderDashboard();
     renderRekening();
@@ -590,19 +595,19 @@ function startListeners() {
   }));
 
   // piutang
-  unsubs.push(onSnapshot(query(collection(db, 'piutang'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_piutang'), orderBy('createdAt', 'desc')), snap => {
     piutangData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPiutang();
     renderDashboard();
   }));
-  unsubs.push(onSnapshot(query(collection(db, 'piutang_bayar'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_piutang_bayar'), orderBy('createdAt', 'asc')), snap => {
     piutangBayar = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPiutang();
     renderDashboard();
   }));
 
   // pengajuan pengeluaran (Pengurus → Kasir konfirmasi)
-  unsubs.push(onSnapshot(query(collection(db, 'pengajuan_kas'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnapshot(query(collection(db, 'lk_pengajuan_kas'), orderBy('createdAt', 'desc')), snap => {
     pengajuanData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPengajuanPending();
     renderPengajuanRiwayat();
@@ -610,7 +615,7 @@ function startListeners() {
   }));
 
   // kategori (dinamis: sistem + custom + pending)
-  unsubs.push(onSnapshot(collection(db, 'kategori'), async snap => {
+  unsubs.push(onSnapshot(collection(db, 'lk_kategori'), async snap => {
     kategoriData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // Auto-seed: kalau kategori sistem belum ada (database lama), seed sekarang (admin only)
     if (currentRole === 'developer' && KATEGORI_SISTEM.some(k => !kategoriData.find(x => x.key === k.key))) {
@@ -626,7 +631,7 @@ function startListeners() {
   }));
 
   // settings (saldo awal)
-  unsubs.push(onSnapshot(doc(db, 'settings', 'saldo-awal'), snap => {
+  unsubs.push(onSnapshot(doc(db, 'lk_settings', 'saldo-awal'), snap => {
     const d = snap.data() || {};
     saldoAwalTunai = Number(d.tunai || 0);
     // isi form input jika sudah ada
@@ -888,11 +893,11 @@ document.getElementById('btn-simpan-sup').addEventListener('click', async () => 
   try {
     if (editingSupId) {
       // Mode edit — update dokumen yang ada
-      await updateDoc(doc(db, 'suppliers', editingSupId), data);
+      await updateDoc(doc(db, 'lk_suppliers', editingSupId), data);
       toast('Supplier berhasil diperbarui ✓');
     } else {
       // Mode tambah baru
-      await addDoc(collection(db, 'suppliers'), { ...data, ...inputByFields(), createdAt: serverTimestamp() });
+      await addDoc(collection(db, 'lk_suppliers'), { ...data, ...inputByFields(), createdAt: serverTimestamp() });
       toast('Supplier berhasil ditambahkan');
     }
     resetSupForm();
@@ -929,7 +934,7 @@ document.getElementById('tbody-supplier').addEventListener('click', e => {
   const s = suppliers.find(x => x.id === delId);
   confirmDelete(`Hapus supplier <strong>${s?.nama || ''}</strong>?`, async () => {
     try {
-      await deleteDoc(doc(db, 'suppliers', delId));
+      await deleteDoc(doc(db, 'lk_suppliers', delId));
       toast('Supplier dihapus');
     } catch (err) {
       toast('Gagal menghapus: ' + err.message, 'error');
@@ -951,7 +956,7 @@ document.getElementById('btn-simpan-mutasi').addEventListener('click', async () 
   const dariLabel = dari === 'tunai' ? 'Tunai' : (rekening.find(r => r.id === dari)?.nama || dari);
   const keLabel   = ke   === 'tunai' ? 'Tunai' : (rekening.find(r => r.id === ke)?.nama   || ke);
   try {
-    await addDoc(collection(db, 'mutasi'), {
+    await addDoc(collection(db, 'lk_mutasi'), {
       dari, ke, jumlah, tgl,
       dariLabel, keLabel,
       ket: document.getElementById('mut-ket').value.trim() || `Transfer ${dariLabel} → ${keLabel}`,
@@ -1099,7 +1104,7 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
       fotoNota = await getDownloadURL(ref);
     }
 
-    await addDoc(collection(db, 'pembelian'), {
+    await addDoc(collection(db, 'lk_pembelian'), {
       tgl, supplierId: supId, jenis, qty, harga, total,
       fotoNota, linkNota: link || null,
       caraBayar: document.getElementById('beli-carabayar').value,
@@ -1134,7 +1139,7 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
   if (delId) {
     confirmDelete('Hapus data pembelian ini?', async () => {
       try {
-        await deleteDoc(doc(db, 'pembelian', delId));
+        await deleteDoc(doc(db, 'lk_pembelian', delId));
         toast('Data pembelian dihapus');
       } catch (err) {
         toast('Gagal menghapus: ' + err.message, 'error');
@@ -1147,7 +1152,7 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
   const approveId = e.target.dataset.approveBeli;
   if (approveId && canApprove()) {
     try {
-      await updateDoc(doc(db, 'pembelian', approveId), {
+      await updateDoc(doc(db, 'lk_pembelian', approveId), {
         statusApproval: 'disetujui',
         approvedBy:   currentUser?.uid || '',
         approvedNama: currentUserData?.nama || '',
@@ -1164,7 +1169,7 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
   const rejectId = e.target.dataset.rejectBeli;
   if (rejectId && canApprove()) {
     try {
-      await updateDoc(doc(db, 'pembelian', rejectId), {
+      await updateDoc(doc(db, 'lk_pembelian', rejectId), {
         statusApproval: 'ditolak',
         approvedBy:   currentUser?.uid || '',
         approvedNama: currentUserData?.nama || '',
@@ -1235,7 +1240,7 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
     }
 
     // 2. Update pembelian: bukti + auto-approve
-    await updateDoc(doc(db, 'pembelian', bayarPembelianId), {
+    await updateDoc(doc(db, 'lk_pembelian', bayarPembelianId), {
       buktiTransfer:   buktiUrl,
       statusApproval:  'disetujui',
       approvedBy:      currentUser?.email || '',
@@ -1244,7 +1249,7 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
 
     // 3. Buat entri kasir otomatis
     const via = rekeningId === 'tunai' ? 'tunai' : 'transfer';
-    await addDoc(collection(db, 'kasir'), {
+    await addDoc(collection(db, 'lk_kasir'), {
       tgl,
       jenis:       'pengeluaran',
       kategori:    'bayar-supplier',
@@ -1377,7 +1382,7 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
 
   try {
     const ket = document.getElementById('kas-ket').value.trim();
-    await addDoc(collection(db, 'kasir'), {
+    await addDoc(collection(db, 'lk_kasir'), {
       tgl, jenis, kategori, jumlah,
       supplierId:  supplierId  || null,
       via,
@@ -1391,7 +1396,7 @@ document.getElementById('btn-simpan-kas').addEventListener('click', async () => 
     if (kategori === 'piutang') {
       const cicilan   = parseRibuan(document.getElementById('kas-piu-cicilan').value) || 0;
       const tglCicilan = document.getElementById('kas-piu-tgl-cicilan').value;
-      await addDoc(collection(db, 'piutang'), {
+      await addDoc(collection(db, 'lk_piutang'), {
         nama: piuNama, jumlah, tgl,
         cicilan, tglCicilan,
         ket: ket || `Dicatat dari kasir ${tgl}`,
@@ -1505,13 +1510,13 @@ document.getElementById('btn-simpan-semua-kas').addEventListener('click', async 
   btn.textContent = 'Menyimpan…';
   try {
     for (const d of kasirAntrian) {
-      await addDoc(collection(db, 'kasir'), {
+      await addDoc(collection(db, 'lk_kasir'), {
         tgl: d.tgl, jenis: d.jenis, kategori: d.kategori, jumlah: d.jumlah,
         supplierId: d.supplierId || null, via: d.via, rekeningId: d.rekeningId || null, ket: d.ket,
         ...inputByFields(), createdAt: serverTimestamp(),
       });
       if (d.kategori === 'piutang' && d.piuNama) {
-        await addDoc(collection(db, 'piutang'), {
+        await addDoc(collection(db, 'lk_piutang'), {
           nama: d.piuNama, jumlah: d.jumlah, tgl: d.tgl,
           cicilan: d.cicilan, tglCicilan: d.tglCicilan,
           ket: d.ket || `Dicatat dari kasir ${d.tgl}`,
@@ -1543,7 +1548,7 @@ document.getElementById('tbody-kasir').addEventListener('click', e => {
   if (!id) return;
   confirmDelete('Hapus transaksi ini?', async () => {
     try {
-      await deleteDoc(doc(db, 'kasir', id));
+      await deleteDoc(doc(db, 'lk_kasir', id));
       toast('Transaksi dihapus');
     } catch (err) {
       toast('Gagal menghapus: ' + err.message, 'error');
@@ -1940,7 +1945,7 @@ document.getElementById('btn-simpan-user').addEventListener('click', async () =>
     // Gunakan secondary app agar admin tidak ter-logout
     const secAuth = getSecondaryAuth();
     const cred    = await createUserWithEmailAndPassword(secAuth, email, password);
-    await setDoc(doc(db, 'users', cred.user.uid), {
+    await setDoc(doc(db, 'lk_users', cred.user.uid), {
       uid: cred.user.uid, nama, username, email, role, active: true,
       createdAt: serverTimestamp(),
     });
@@ -1983,7 +1988,7 @@ document.getElementById('tbody-users').addEventListener('click', async e => {
   const u = users.find(x => x.id === id);
   confirmDelete(`${action} pengguna <strong>${u?.nama || ''}</strong>?`, async () => {
     try {
-      await updateDoc(doc(db, 'users', id), { active: !isActive });
+      await updateDoc(doc(db, 'lk_users', id), { active: !isActive });
       toast(`Pengguna berhasil di${isActive ? 'nonaktifkan' : 'aktifkan'}`);
     } catch (err) {
       toast('Gagal memperbarui: ' + err.message, 'error');
@@ -2024,7 +2029,7 @@ document.getElementById('btn-edit-user-save')?.addEventListener('click', async (
 
   try {
     const patch = { nama, username: username || null, role: newRole };
-    await updateDoc(doc(db, 'users', id), patch);
+    await updateDoc(doc(db, 'lk_users', id), patch);
     document.getElementById('modal-edit-user').classList.add('hidden');
     toast(`Data pengguna ${nama} diperbarui`);
     // Kalau yang diedit diri sendiri, update tampilan badge
@@ -2124,7 +2129,7 @@ document.getElementById('btn-kat-submit')?.addEventListener('click', async () =>
   const status = currentRole === 'developer' ? 'approved' : 'pending';
 
   try {
-    await setDoc(doc(db, 'kategori', key), {
+    await setDoc(doc(db, 'lk_kategori', key), {
       key, label, jenis, tipe, ket,
       status,
       isSystem: false,
@@ -2213,7 +2218,7 @@ document.getElementById('tbody-pending-kategori')?.addEventListener('click', asy
   if (!k) return;
   try {
     if (approveKey) {
-      await updateDoc(doc(db, 'kategori', key), {
+      await updateDoc(doc(db, 'lk_kategori', key), {
         status: 'approved',
         approverId:   currentUser.uid,
         approverNama: currentUserData?.nama || '',
@@ -2222,7 +2227,7 @@ document.getElementById('tbody-pending-kategori')?.addEventListener('click', asy
       toast(`Kategori "${k.label}" disetujui`);
     } else {
       // Tolak → hapus saja agar key bisa diajukan ulang
-      await deleteDoc(doc(db, 'kategori', key));
+      await deleteDoc(doc(db, 'lk_kategori', key));
       toast(`Pengajuan "${k.label}" ditolak`);
     }
   } catch (err) {
@@ -2244,7 +2249,7 @@ document.getElementById('tbody-kategori-aktif')?.addEventListener('click', async
   }
   confirmDelete(`Hapus kategori <strong>${k.label}</strong>?`, async () => {
     try {
-      await deleteDoc(doc(db, 'kategori', key));
+      await deleteDoc(doc(db, 'lk_kategori', key));
       toast('Kategori dihapus');
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
@@ -2342,7 +2347,7 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
   if (via === 'transfer' && !rekeningId) { toast('Pilih rekening', 'error'); return; }
 
   try {
-    await addDoc(collection(db, 'pengajuan_kas'), {
+    await addDoc(collection(db, 'lk_pengajuan_kas'), {
       tgl, kategori, jumlah,
       supplierId:  supplierId  || null,
       via,
@@ -2452,7 +2457,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
     confirmDelete(`Konfirmasi pengajuan <strong>${getKategoriLabel(p.kategori)}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong>?<br>Ini akan masuk sebagai pengeluaran kas.`, async () => {
       try {
         // 1. Buat entry di kasir collection (pengeluaran)
-        const kasirRef = await addDoc(collection(db, 'kasir'), {
+        const kasirRef = await addDoc(collection(db, 'lk_kasir'), {
           tgl: p.tgl,
           jenis: 'pengeluaran',
           kategori: p.kategori,
@@ -2469,7 +2474,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
           createdAt: serverTimestamp(),
         });
         // 2. Update pengajuan jadi done
-        await updateDoc(doc(db, 'pengajuan_kas', p.id), {
+        await updateDoc(doc(db, 'lk_pengajuan_kas', p.id), {
           status: 'done',
           konfirmasiId: currentUser.uid,
           konfirmasiNama: currentUserData?.nama || '',
@@ -2485,7 +2490,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
     // Tolak — minta alasan via prompt sederhana
     const reason = prompt('Alasan penolakan (opsional):') || '';
     try {
-      await updateDoc(doc(db, 'pengajuan_kas', p.id), {
+      await updateDoc(doc(db, 'lk_pengajuan_kas', p.id), {
         status: 'rejected',
         konfirmasiId: currentUser.uid,
         konfirmasiNama: currentUserData?.nama || '',
@@ -2684,7 +2689,7 @@ document.getElementById('btn-simpan-po').addEventListener('click', async () => {
   }
 
   try {
-    await addDoc(collection(db, 'po'), {
+    await addDoc(collection(db, 'lk_po'), {
       noPO, tgl, supplierId: supId, items, totalNilai, caraBayar,
       status: 'pending', fotoUrl, ket, ...inputByFields(), createdAt: serverTimestamp(),
     });
@@ -2760,7 +2765,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
     const po = poData.find(p => p.id === statusId);
     const label = newStatus === 'dikirim' ? 'Tandai Terkirim' : 'Batalkan PO';
     confirmDelete(`${label} PO <strong>${po?.noPO || ''}</strong>?`, async () => {
-      try { await updateDoc(doc(db, 'po', statusId), { status: newStatus }); toast('PO diperbarui'); }
+      try { await updateDoc(doc(db, 'lk_po', statusId), { status: newStatus }); toast('PO diperbarui'); }
       catch (err) { toast('Gagal: ' + err.message, 'error'); }
     }, label);
     return;
@@ -2774,7 +2779,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
       async () => {
         try {
           await Promise.all((po.items || []).map(item =>
-            addDoc(collection(db, 'pembelian'), {
+            addDoc(collection(db, 'lk_pembelian'), {
               tgl: po.tgl, supplierId: po.supplierId,
               jenis: item.nama, qty: item.qty, harga: item.harga, total: item.total,
               caraBayar: po.caraBayar || 'hutang',
@@ -2783,7 +2788,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
               ...inputByFields(),
             })
           ));
-          await updateDoc(doc(db, 'po', selesaiId), { status: 'selesai' });
+          await updateDoc(doc(db, 'lk_po', selesaiId), { status: 'selesai' });
           toast(`PO ${po.noPO} selesai — ${po.items.length} item masuk ke Pembelian`);
         } catch (err) { toast('Gagal: ' + err.message, 'error'); }
       }, 'Selesaikan'
@@ -2795,7 +2800,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
   if (delId) {
     const po = poData.find(p => p.id === delId);
     confirmDelete(`Hapus PO <strong>${po?.noPO || ''}</strong>?`, async () => {
-      try { await deleteDoc(doc(db, 'po', delId)); toast('PO dihapus'); }
+      try { await deleteDoc(doc(db, 'lk_po', delId)); toast('PO dihapus'); }
       catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
     });
   }
@@ -2859,7 +2864,7 @@ function renderAnggaran() {
   tbody.querySelectorAll('.ang-status-select').forEach(sel => {
     sel.addEventListener('change', async function () {
       try {
-        await updateDoc(doc(db, 'anggaran', this.dataset.angId), { status: this.value });
+        await updateDoc(doc(db, 'lk_anggaran', this.dataset.angId), { status: this.value });
         toast('Status anggaran diperbarui ✓');
       } catch (e) { toast('Gagal: ' + e.message, 'error'); }
     });
@@ -2872,7 +2877,7 @@ document.getElementById('btn-simpan-ang').addEventListener('click', async () => 
   if (!nama)   { toast('Nama anggaran wajib diisi', 'error'); return; }
   if (!target) { toast('Target dana wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'anggaran'), {
+    await addDoc(collection(db, 'lk_anggaran'), {
       nama,
       kategori: document.getElementById('ang-kategori').value,
       target,
@@ -2894,7 +2899,7 @@ document.getElementById('tbody-anggaran').addEventListener('click', e => {
   if (!delId) return;
   confirmDelete('Hapus rencana anggaran ini?', async () => {
     try {
-      await deleteDoc(doc(db, 'anggaran', delId));
+      await deleteDoc(doc(db, 'lk_anggaran', delId));
       toast('Anggaran dihapus');
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
@@ -3009,7 +3014,7 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   const tgl    = document.getElementById('piu-tgl').value;
   if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'piutang'), {
+    await addDoc(collection(db, 'lk_piutang'), {
       nama, jumlah, tgl,
       cicilan:    parseRibuan(document.getElementById('piu-cicilan').value) || 0,
       tglCicilan: document.getElementById('piu-tgl-cicilan').value,
@@ -3097,9 +3102,9 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
   const p = piutangData.find(x => x.id === delId);
   confirmDelete(`Hapus piutang <strong>${p?.nama || ''}</strong>? Riwayat bayar ikut terhapus.`, async () => {
     try {
-      await deleteDoc(doc(db, 'piutang', delId));
+      await deleteDoc(doc(db, 'lk_piutang', delId));
       // hapus semua bayar terkait
-      const q = await getDocs(query(collection(db, 'piutang_bayar')));
+      const q = await getDocs(query(collection(db, 'lk_piutang_bayar')));
       await Promise.all(q.docs.filter(d => d.data().piutangId === delId).map(d => deleteDoc(d.ref)));
       toast('Piutang dihapus');
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
@@ -3113,7 +3118,7 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
   const tgl    = document.getElementById('bayar-tgl').value;
   if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'piutang_bayar'), {
+    await addDoc(collection(db, 'lk_piutang_bayar'), {
       piutangId: piuId, jumlah, tgl, type: 'bayar',
       ket: document.getElementById('bayar-ket').value.trim(),
       ...inputByFields(),
@@ -3126,7 +3131,7 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
       const totalBayarBaru = dibayar + jumlah;
       const totalPinjaman  = Number(p.jumlah || 0) + diambil;
       if (totalBayarBaru >= totalPinjaman) {
-        await updateDoc(doc(db, 'piutang', piuId), { status: 'lunas' });
+        await updateDoc(doc(db, 'lk_piutang', piuId), { status: 'lunas' });
         toast('Pembayaran dicatat — Piutang LUNAS! 🎉');
       } else {
         toast('Pembayaran berhasil dicatat ✓');
@@ -3183,7 +3188,7 @@ document.getElementById('btn-simpan-ambil').addEventListener('click', async () =
   const tgl    = document.getElementById('ambil-tgl').value;
   if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'piutang_bayar'), {
+    await addDoc(collection(db, 'lk_piutang_bayar'), {
       piutangId: piuId, jumlah, tgl, type: 'ambil',
       ket: document.getElementById('ambil-ket').value.trim(),
       ...inputByFields(),
@@ -3241,7 +3246,7 @@ function renderRekening() {
 document.getElementById('btn-simpan-saldo-tunai').addEventListener('click', async () => {
   const val = parseRibuan(document.getElementById('saldo-awal-tunai').value) || 0;
   try {
-    await setDoc(doc(db, 'settings', 'saldo-awal'), { tunai: val }, { merge: true });
+    await setDoc(doc(db, 'lk_settings', 'saldo-awal'), { tunai: val }, { merge: true });
     toast('Saldo awal tunai disimpan ✓');
   } catch (e) {
     toast('Gagal: ' + e.message, 'error');
@@ -3255,7 +3260,7 @@ document.getElementById('btn-simpan-rek').addEventListener('click', async () => 
   const saldoAwal = parseRibuan(document.getElementById('rek-saldo-awal').value) || 0;
   if (!nama || !bank) { toast('Nama dan bank wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'rekening'), { nama, bank, noRek, saldoAwal, createdAt: serverTimestamp(), ...inputByFields() });
+    await addDoc(collection(db, 'lk_rekening'), { nama, bank, noRek, saldoAwal, createdAt: serverTimestamp(), ...inputByFields() });
     ['rek-nama', 'rek-bank', 'rek-norek', 'rek-saldo-awal'].forEach(id => { document.getElementById(id).value = ''; });
     toast('Rekening berhasil ditambahkan');
   } catch (e) {
@@ -3269,7 +3274,7 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
   if (delId) {
     const r = rekening.find(x => x.id === delId);
     confirmDelete(`Hapus rekening <strong>${r?.nama || ''}</strong>?<br><small style="color:var(--text-muted)">Riwayat transaksi tidak ikut terhapus.</small>`, async () => {
-      try { await deleteDoc(doc(db, 'rekening', delId)); toast('Rekening dihapus'); }
+      try { await deleteDoc(doc(db, 'lk_rekening', delId)); toast('Rekening dihapus'); }
       catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
     });
     return;
@@ -3298,7 +3303,7 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
     const cell  = document.querySelector(`.cell-saldo-awal[data-rek-id="${saveId}"]`);
     const newVal = Number(cell?.querySelector('.inline-saldo-input')?.value) || 0;
     try {
-      await updateDoc(doc(db, 'rekening', saveId), { saldoAwal: newVal });
+      await updateDoc(doc(db, 'lk_rekening', saveId), { saldoAwal: newVal });
       toast('Saldo awal diperbarui ✓');
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
@@ -3387,3 +3392,47 @@ document.getElementById('kas-tgl').value  = today();
 document.getElementById('po-tgl').value   = today();
 document.getElementById('mut-tgl').value  = today();
 document.getElementById('piu-tgl').value  = today();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MIGRASI DATA — salin koleksi dari laporan-keuangan-hs ke harmoni-indonesia (lk_*)
+// ═══════════════════════════════════════════════════════════════════════════════
+const MIGRASI_KOLEKSI = [
+  'suppliers', 'pembelian', 'kasir', 'users', 'rekening', 'po', 'anggaran', 'mutasi',
+  'piutang', 'piutang_bayar', 'pengajuan_kas', 'kategori', 'settings',
+];
+
+document.getElementById('btn-migrasi')?.addEventListener('click', async () => {
+  if (currentRole !== 'developer') { toast('Hanya Admin', 'error'); return; }
+  const email    = document.getElementById('migrasi-email').value.trim();
+  const password = document.getElementById('migrasi-password').value;
+  const logEl    = document.getElementById('migrasi-log');
+  const btn      = document.getElementById('btn-migrasi');
+  if (!email || !password) { toast('Isi email & password akun lama', 'error'); return; }
+  if (!confirm('Salin semua data dari project lama ke project baru? Dokumen dengan ID sama akan ditimpa.')) return;
+
+  const log = msg => { logEl.textContent += msg + '\n'; };
+  logEl.textContent = '';
+  btn.disabled = true;
+  try {
+    log('Login ke project lama...');
+    await signInWithEmailAndPassword(oldAuth, email, password);
+    let total = 0;
+    for (const name of MIGRASI_KOLEKSI) {
+      const snap = await getDocs(collection(oldDb, name));
+      for (const d of snap.docs) {
+        await setDoc(doc(db, 'lk_' + name, d.id), d.data());
+      }
+      total += snap.size;
+      log(`✓ ${name}: ${snap.size} dokumen`);
+    }
+    log(`Selesai — ${total} dokumen disalin.`);
+    toast('Migrasi selesai');
+  } catch (e) {
+    console.error('Migrasi gagal:', e);
+    log('✗ Gagal: ' + e.message);
+    toast('Migrasi gagal: ' + e.message, 'error');
+  } finally {
+    await signOut(oldAuth).catch(() => {});
+    btn.disabled = false;
+  }
+});

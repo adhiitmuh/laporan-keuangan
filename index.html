@@ -934,6 +934,23 @@
       <section id="page-admin" class="page">
         <h2 class="page-title">Manajemen Pengguna</h2>
         <div class="form-card">
+          <h3>Migrasi Data dari Project Lama</h3>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Salin semua data dari Firebase <code>laporan-keuangan-hs</code> ke <code>harmoni-indonesia</code>. Login memakai akun lama aplikasi ini (sebelum pindah ke portal Harmoni). Aman dijalankan ulang.</p>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Email Akun Lama</label>
+              <input type="email" id="migrasi-email" autocomplete="off" />
+            </div>
+            <div class="form-group">
+              <label>Password Akun Lama</label>
+              <input type="password" id="migrasi-password" autocomplete="off" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-migrasi">Mulai Migrasi</button>
+          <pre id="migrasi-log" style="font-size:12px;margin-top:12px;white-space:pre-wrap"></pre>
+        </div>
+
+        <div class="form-card">
           <h3>Buat Pengguna Baru</h3>
           <div class="form-grid">
             <div class="form-group">
