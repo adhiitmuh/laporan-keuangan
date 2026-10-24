@@ -252,6 +252,10 @@ function applyRoleUI(role) {
   });
 
   // Saldo awal hanya admin & pengurus
+  // Pengurus tidak punya halaman Admin — tombol backup ditaruh di Laporan
+  const backupWrap = document.getElementById('laporan-backup-wrap');
+  if (backupWrap) backupWrap.style.display = role === 'pengurus' ? '' : 'none';
+
   const saldoForms = ['form-saldo-tunai-wrap', 'form-rekening-wrap'];
   const showSaldo  = role === 'developer' || role === 'pengurus';
   saldoForms.forEach(id => {
@@ -635,8 +639,8 @@ function startListeners() {
   }));
 
   // settings (saldo awal)
-  // Pengingat backup — hanya untuk Admin, muncul jika backup terakhir > 7 hari
-  if (currentRole === 'developer') {
+  // Pengingat backup — untuk role yang boleh backup, muncul jika backup terakhir > 7 hari
+  if (BACKUP_ROLES.includes(currentRole)) {
     unsubs.push(onSnapshot(doc(db, 'lk_settings', 'backup'), snap => {
       const last = snap.data()?.lastAt?.toDate();
       const hari = last ? Math.floor((Date.now() - last) / 86400000) : null;
@@ -3258,6 +3262,7 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
 // BACKUP & EXPORT
 // ═══════════════════════════════════════════════════════════════════════════════
 const BACKUP_INTERVAL_HARI = 7;
+const BACKUP_ROLES         = ['developer', 'pengurus'];  // restore tetap hanya developer
 
 // Semua koleksi data app (tanpa prefix lk_) — dipakai backup, restore & migrasi
 const LK_KOLEKSI = [
@@ -3278,6 +3283,7 @@ const decodeBackup = v =>
   : v;
 
 window.exportBackupJSON = async function() {
+  if (!BACKUP_ROLES.includes(currentRole)) { toast('Anda tidak punya akses backup', 'error'); return; }
   try {
     toast('Menyiapkan backup...');
     const collections = {};
