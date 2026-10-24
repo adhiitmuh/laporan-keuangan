@@ -2,7 +2,6 @@
 // Firebase imports (SDK v10.14.1 via CDN)
 // ═══════════════════════════════════════════════════════════════════════════════
 import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
-import { initializeApp as initializeSecondaryApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
   getAuth,
   signInWithEmailAndPassword,
@@ -66,24 +65,14 @@ const authDb     = getFirestore(harmoniApp);
 const db      = authDb;
 const storage = getStorage(harmoniApp);
 
-// Secondary app (untuk buat user baru tanpa logout admin)
-let secondaryApp  = null;
-let secondaryAuth = null;
-function getSecondaryAuth() {
-  if (!secondaryApp) {
-    secondaryApp  = initializeSecondaryApp(firebaseConfig, 'secondary');
-    secondaryAuth = getAuth(secondaryApp);
-  }
-  return secondaryAuth;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // State in-memory (diisi oleh onSnapshot)
 // ═══════════════════════════════════════════════════════════════════════════════
 let suppliers       = [];
 let pembelian       = [];
 let kasirData       = [];
-let users           = [];
+let users           = [];  // lk_users — daftar user lama, untuk nama "Diinput Oleh"
+let harmoniUsers    = [];  // users di portal Harmoni (hanya owner yang bisa baca)
 let poData          = [];
 let rekening        = [];
 let anggaranData    = [];  // anggaran non-PO
@@ -511,7 +500,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
       mappedRole = appAccess.role || 'kasir';
     }
 
-    const userData = { ...rawData, role: mappedRole, email: firebaseUser.email };
+    const userData = { ...rawData, role: mappedRole, email: firebaseUser.email, isOwner: rawData.role === 'owner' };
 
     currentUser     = firebaseUser;
     currentUserData = userData;
@@ -561,6 +550,16 @@ function startListeners() {
     renderSupplier();
     renderDashboard();
   }));
+
+  // users portal Harmoni — rules hanya izinkan owner membaca semua user
+  if (currentUserData?.isOwner) {
+    unsubs.push(onSnapshot(collection(authDb, 'users'), snap => {
+      harmoniUsers = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.nama || a.email || '').localeCompare(b.nama || b.email || ''));
+      renderUsers();
+    }));
+  }
 
   // users (admin only — tapi kita tetap load untuk keperluan tampil nama)
   unsubs.push(onSnapshot(query(collection(db, 'lk_users'), orderBy('createdAt', 'asc')), snap => {
@@ -1891,160 +1890,78 @@ document.getElementById('btn-mode-bulanan').addEventListener('click', () => setL
 document.getElementById('btn-mode-tahunan').addEventListener('click', () => setLaporanMode('tahunan'));
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ADMIN — manajemen user
+// ADMIN — akses user Harmoni ke Laporan Keuangan
+// Akun dibuat di portal Harmoni; di sini hanya atur apps.laporan_keuangan
 // ═══════════════════════════════════════════════════════════════════════════════
+const LK_ROLES = ['kasir', 'pengurus', 'pemilik', 'developer'];
+
 function renderUsers() {
   const tbody = document.getElementById('tbody-users');
   if (!tbody) return;
-  if (!users.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">Belum ada data pengguna</td></tr>`;
+  if (!currentUserData?.isOwner) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Hanya owner Harmoni yang bisa mengatur akses pengguna</td></tr>`;
+    return;
+  }
+  if (!harmoniUsers.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Belum ada data pengguna</td></tr>`;
     return;
   }
   tbody.innerHTML = '';
-  users.forEach(u => {
-    const isMe  = u.uid === currentUser?.uid;
+  harmoniUsers.forEach(u => {
+    const isOwner = u.role === 'owner';
+    const lk      = u.apps?.laporan_keuangan || {};
+    const akses   = isOwner || lk.akses === true;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${u.nama || '-'}</strong></td>
-      <td>${u.username
-        ? `<code style="background:var(--brand-light);color:var(--brand);padding:2px 8px;border-radius:4px;font-size:12px">${u.username}</code>`
-        : '<span class="text-muted-sm">–</span>'}</td>
-      <td>${u.email}</td>
-      <td><span class="role-badge role-${u.role}">${u.role}</span></td>
-      <td>${u.active !== false
+      <td><strong>${u.nama || '-'}</strong>${u.id === currentUser?.uid ? ' <em style="color:var(--text-muted);font-size:12px">(Anda)</em>' : ''}</td>
+      <td>${u.email || '-'}</td>
+      <td>${u.aktif
         ? '<span class="badge badge-aktif">Aktif</span>'
-        : '<span class="badge badge-nonaktif">Nonaktif</span>'
-      }</td>
-      <td>
-        <button class="btn-sm btn-sm-blue" data-edit-user="${u.id}" style="margin-right:4px">Edit</button>
-        ${isMe ? '<em style="color:var(--text-muted);font-size:12px">(Anda)</em>' : `
-          <button class="btn-sm ${u.active !== false ? 'btn-sm-orange' : 'btn-sm-red'}"
-            data-toggle-user="${u.id}"
-            data-active="${u.active !== false ? 'true' : 'false'}">
-            ${u.active !== false ? 'Nonaktifkan' : 'Aktifkan'}
-          </button>
-        `}
-      </td>
+        : '<span class="badge badge-nonaktif">Nonaktif</span>'}</td>
+      <td>${isOwner
+        ? '<span class="role-badge role-developer">owner</span>'
+        : `<select data-lk-role="${u.id}" ${akses ? '' : 'disabled'}>
+            ${LK_ROLES.map(r => `<option value="${r}" ${(lk.role || 'kasir') === r ? 'selected' : ''}>${r}</option>`).join('')}
+          </select>`}</td>
+      <td>${isOwner
+        ? '<em style="color:var(--text-muted);font-size:12px">Selalu punya akses</em>'
+        : `<button class="btn-sm ${akses ? 'btn-sm-orange' : 'btn-sm-blue'}" data-lk-akses="${u.id}" data-akses="${akses}">
+            ${akses ? 'Cabut Akses' : 'Beri Akses'}
+          </button>`}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-document.getElementById('btn-simpan-user').addEventListener('click', async () => {
-  if (currentRole !== 'developer') { toast('Hanya Admin yang bisa membuat user', 'error'); return; }
-  const nama     = document.getElementById('usr-nama').value.trim();
-  const username = document.getElementById('usr-username').value.trim().toLowerCase();
-  const email    = document.getElementById('usr-email').value.trim();
-  const password = document.getElementById('usr-password').value;
-  const role     = document.getElementById('usr-role').value;
-
-  if (!nama || !username || !email || !password) { toast('Semua field wajib diisi', 'error'); return; }
-  if (!USERNAME_REGEX.test(username)) { toast('Username 3-20 karakter, huruf kecil/angka/underscore', 'error'); return; }
-  if (password.length < 6) { toast('Password minimal 6 karakter', 'error'); return; }
-
-  // Cek username unique
-  if (users.some(u => u.username === username)) { toast(`Username "${username}" sudah dipakai`, 'error'); return; }
-
+document.getElementById('tbody-users').addEventListener('change', async e => {
+  const id = e.target.dataset.lkRole;
+  if (!id || !currentUserData?.isOwner) return;
+  const u = harmoniUsers.find(x => x.id === id);
   try {
-    // Gunakan secondary app agar admin tidak ter-logout
-    const secAuth = getSecondaryAuth();
-    const cred    = await createUserWithEmailAndPassword(secAuth, email, password);
-    await setDoc(doc(db, 'lk_users', cred.user.uid), {
-      uid: cred.user.uid, nama, username, email, role, active: true,
-      createdAt: serverTimestamp(),
-    });
-    // Logout dari secondary app (supaya bersih)
-    await signOut(secAuth);
-
-    ['usr-nama', 'usr-username', 'usr-email', 'usr-password'].forEach(id => { document.getElementById(id).value = ''; });
-    toast(`Pengguna ${nama} berhasil dibuat`);
-  } catch (e) {
-    toast('Gagal membuat user: ' + friendlyError(e.code), 'error');
+    await updateDoc(doc(authDb, 'users', id), { 'apps.laporan_keuangan.role': e.target.value });
+    toast(`Role ${u?.nama || ''} diubah ke ${e.target.value}`);
+  } catch (err) {
+    toast('Gagal memperbarui: ' + err.message, 'error');
+    renderUsers();
   }
 });
 
 document.getElementById('tbody-users').addEventListener('click', async e => {
-  // Tombol Edit
-  const editId = e.target.dataset.editUser;
-  if (editId) {
-    if (currentRole !== 'developer') { toast('Hanya Admin yang bisa edit user', 'error'); return; }
-    const u = users.find(x => x.id === editId);
-    if (!u) return;
-    document.getElementById('edit-user-id').value       = u.id;
-    document.getElementById('edit-user-nama').value     = u.nama || '';
-    document.getElementById('edit-user-username').value = u.username || '';
-    document.getElementById('edit-user-email').value    = u.email || '';
-    document.getElementById('edit-user-role').value     = u.role || 'kasir';
-    document.getElementById('edit-user-error').classList.add('hidden');
-    // Cegah ubah role diri sendiri
-    const isMe = u.uid === currentUser?.uid;
-    document.getElementById('edit-user-role').disabled = isMe;
-    document.getElementById('edit-user-role-hint').style.display = isMe ? '' : 'none';
-    document.getElementById('modal-edit-user').classList.remove('hidden');
-    return;
-  }
-
-  // Tombol Toggle aktif
-  const id = e.target.dataset.toggleUser;
-  if (!id) return;
-  const isActive = e.target.dataset.active === 'true';
-  const action   = isActive ? 'Nonaktifkan' : 'Aktifkan';
-  const u = users.find(x => x.id === id);
-  confirmDelete(`${action} pengguna <strong>${u?.nama || ''}</strong>?`, async () => {
+  const id = e.target.dataset.lkAkses;
+  if (!id || !currentUserData?.isOwner) return;
+  const punyaAkses = e.target.dataset.akses === 'true';
+  const u      = harmoniUsers.find(x => x.id === id);
+  const action = punyaAkses ? 'Cabut akses' : 'Beri akses';
+  confirmDelete(`${action} Laporan Keuangan untuk <strong>${u?.nama || u?.email || ''}</strong>?`, async () => {
+    const patch = { 'apps.laporan_keuangan.akses': !punyaAkses };
+    if (!punyaAkses && !u?.apps?.laporan_keuangan?.role) patch['apps.laporan_keuangan.role'] = 'kasir';
     try {
-      await updateDoc(doc(db, 'lk_users', id), { active: !isActive });
-      toast(`Pengguna berhasil di${isActive ? 'nonaktifkan' : 'aktifkan'}`);
+      await updateDoc(doc(authDb, 'users', id), patch);
+      toast(`${action} berhasil`);
     } catch (err) {
       toast('Gagal memperbarui: ' + err.message, 'error');
     }
   }, action);
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MODAL EDIT USER
-// ═══════════════════════════════════════════════════════════════════════════════
-['btn-edit-user-close', 'btn-edit-user-cancel'].forEach(id => {
-  document.getElementById(id)?.addEventListener('click', () => {
-    document.getElementById('modal-edit-user').classList.add('hidden');
-  });
-});
-
-document.getElementById('btn-edit-user-save')?.addEventListener('click', async () => {
-  if (currentRole !== 'developer') { toast('Hanya Admin', 'error'); return; }
-  const id       = document.getElementById('edit-user-id').value;
-  const nama     = document.getElementById('edit-user-nama').value.trim();
-  const username = document.getElementById('edit-user-username').value.trim().toLowerCase();
-  const role     = document.getElementById('edit-user-role').value;
-  const errEl    = document.getElementById('edit-user-error');
-  errEl.classList.add('hidden');
-
-  const u = users.find(x => x.id === id);
-  if (!u) { errEl.textContent = 'User tidak ditemukan.'; errEl.classList.remove('hidden'); return; }
-  if (!nama) { errEl.textContent = 'Nama wajib diisi.'; errEl.classList.remove('hidden'); return; }
-  if (username && !USERNAME_REGEX.test(username)) { errEl.textContent = 'Username 3-20 karakter, huruf kecil/angka/underscore.'; errEl.classList.remove('hidden'); return; }
-  // Cek username unique (kecuali milik user ini sendiri)
-  if (username && users.some(x => x.id !== id && x.username === username)) {
-    errEl.textContent = `Username "${username}" sudah dipakai user lain.`; errEl.classList.remove('hidden'); return;
-  }
-
-  // Cegah ubah role diri sendiri
-  const isMe = u.uid === currentUser?.uid;
-  const newRole = isMe ? u.role : role;
-
-  try {
-    const patch = { nama, username: username || null, role: newRole };
-    await updateDoc(doc(db, 'lk_users', id), patch);
-    document.getElementById('modal-edit-user').classList.add('hidden');
-    toast(`Data pengguna ${nama} diperbarui`);
-    // Kalau yang diedit diri sendiri, update tampilan badge
-    if (isMe) {
-      currentUserData = { ...currentUserData, ...patch };
-      setUserBadge(currentUserData);
-    }
-  } catch (e) {
-    errEl.textContent = 'Gagal: ' + (e.message || e.code);
-    errEl.classList.remove('hidden');
-  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
