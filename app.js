@@ -314,6 +314,8 @@ function navigateTo(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pageEl = document.getElementById('page-' + page);
   if (pageEl) pageEl.classList.add('active');
+  // Simpan halaman di URL supaya refresh tetap di halaman yang sama
+  history.replaceState(null, '', '#' + page);
 
   if (page === 'dashboard') renderDashboard();
   if (page === 'laporan')   renderLaporan();
@@ -519,7 +521,9 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     applyRoleUI(currentRole);
     startListeners();
     showScreen('app');
-    navigateTo((ROLE_PAGES[currentRole] || ['dashboard'])[0]);
+    const allowedPages = ROLE_PAGES[currentRole] || ['dashboard'];
+    const hashPage     = location.hash.slice(1);
+    navigateTo(allowedPages.includes(hashPage) ? hashPage : allowedPages[0]);
 
   } catch (e) {
     console.error('Error loading user data:', e);
