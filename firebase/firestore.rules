@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Profil user — hanya bisa akses milik sendiri, owner bisa semua
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner';
+    }
+
+    // Data Sistem Penjahit — semua user login bisa akses
+    match /toko/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /shared/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    match /settings/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ── Data Laporan Keuangan — koleksi berawalan lk_ ──
+    function lkUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    // Owner Harmoni = developer; staf pakai role dari apps.laporan_keuangan
+    function lkRole() {
+      let u = lkUser();
+      return u.get('role', '') == 'owner'
+        ? 'developer'
+        : u.get('apps', {}).get('laporan_keuangan', {}).get('role', 'kasir');
+    }
+    function lkBolehAkses() {
+      let u = lkUser();
+      return request.auth != null
+        && u.get('aktif', false) == true
+        && (u.get('role', '') == 'owner'
+            || u.get('apps', {}).get('laporan_keuangan', {}).get('akses', false) == true);
+    }
+    // developer: semua · pengurus: semua kecuali lk_users
+    // kasir: hanya input kas, pembelian, piutang dari kas, konfirmasi pengajuan, ajukan kategori
+    // pemilik: hanya lihat
+    function lkBolehTulis(koleksi) {
+      let r = lkRole();
+      return r == 'developer'
+        || (r == 'pengurus' && koleksi != 'lk_users')
+        || (r == 'kasir' && koleksi in ['lk_kasir', 'lk_pembelian', 'lk_piutang', 'lk_pengajuan_kas', 'lk_kategori']);
+    }
+
+    match /{koleksi}/{docId} {
+      allow read: if koleksi.matches('lk_.*') && lkBolehAkses();
+      allow create, update: if koleksi.matches('lk_.*') && lkBolehAkses() && lkBolehTulis(koleksi);
+      allow delete: if koleksi.matches('lk_.*') && lkBolehAkses() && lkRole() in ['developer', 'pengurus'];
+    }
+  }
+}

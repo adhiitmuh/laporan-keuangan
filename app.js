@@ -7,7 +7,6 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  createUserWithEmailAndPassword,
   EmailAuthProvider,
   reauthenticateWithCredential,
   updatePassword,
@@ -28,6 +27,8 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
+  writeBatch,
+  runTransaction,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -91,8 +92,6 @@ let currentUser     = null; // Firebase Auth user object
 let currentUserData = null; // Firestore users/{uid} document data
 let currentRole     = null; // string: 'developer' | 'pemilik' | 'pengurus' | 'kasir'
 
-// Flag untuk mencegah onAuthStateChanged mengganggu proses setup
-let isSettingUp = false;
 
 // Unsubscribe handles untuk onSnapshot
 const unsubs = [];
@@ -106,11 +105,17 @@ const formatRibuan = n => Number(n || 0).toLocaleString('id-ID');
 const parseRibuan  = s => Number(String(s).replace(/\./g, '').replace(/,/g, '')) || 0;
 const monthOf = d => (d ? String(d).slice(0, 7) : '');
 
+// Escape teks dari database sebelum dimasukkan ke innerHTML (cegah XSS)
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Hanya izinkan link http(s) untuk href
+const safeUrl = u => (/^https?:\/\//i.test(String(u || '')) ? esc(u) : '#');
+
 // Auto-format input angka dengan titik ribuan saat user mengetik
 const RIBUAN_IDS = [
   'beli-qty','beli-harga','beli-total','kas-jumlah','ang-target',
   'piu-jumlah','piu-cicilan','bayar-jumlah','mut-jumlah',
-  'saldo-awal-tunai','rek-saldo-awal','kas-piu-cicilan',
+  'saldo-awal-tunai','rek-saldo-awal','kas-piu-cicilan','pgj-jumlah',
 ];
 RIBUAN_IDS.forEach(id => {
   const el = document.getElementById(id);
@@ -145,7 +150,7 @@ function inputByBadge(item) {
   const role = item.inputByRole || users.find(u => u.uid === item.inputBy)?.role || '';
   if (!nama) return '<span class="text-muted-sm">–</span>';
   const roleColor = role === 'pengurus' ? '#7c3aed' : role === 'developer' ? '#15803d' : '#2563eb';
-  return `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${nama}</span>${role ? `<br><span style="font-size:10px;color:#9ca3af">${role}</span>` : ''}`;
+  return `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${esc(nama)}</span>${role ? `<br><span style="font-size:10px;color:#9ca3af">${esc(role)}</span>` : ''}`;
 }
 
 // Kategori bawaan sistem — di-seed ke Firestore saat first-run setup.
@@ -208,10 +213,9 @@ function setEl(id, v){ const e = document.getElementById(id); if (e) e.textConte
 // Screen switching
 // ═══════════════════════════════════════════════════════════════════════════════
 function showScreen(name) {
-  // name: 'loading' | 'login' | 'setup' | 'app'
+  // name: 'loading' | 'login' | 'app'
   document.getElementById('global-loading').classList.toggle('hidden', name !== 'loading');
   document.getElementById('login-screen').classList.toggle('hidden', name !== 'login');
-  document.getElementById('setup-screen').classList.toggle('hidden', name !== 'setup');
   document.getElementById('app').classList.toggle('hidden', name !== 'app');
 }
 
@@ -336,69 +340,6 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// First-run check: baca dokumen meta/config (publicly readable)
-// ═══════════════════════════════════════════════════════════════════════════════
-async function checkFirstRun() {
-  return false; // setup sudah dilakukan, auth dikelola portal
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SETUP SCREEN (admin pertama)
-// ═══════════════════════════════════════════════════════════════════════════════
-// Validasi format username
-const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
-
-// Cek apakah username sudah dipakai (kembalikan dokumen user yang pakai, atau null)
-async function findUserByUsername(uname) {
-  const snap = await getDocs(query(collection(db, 'lk_users')));
-  return snap.docs.find(d => d.data().username === uname)?.data() || null;
-}
-
-document.getElementById('btn-setup').addEventListener('click', async () => {
-  const nama     = document.getElementById('setup-nama').value.trim();
-  const username = document.getElementById('setup-username').value.trim().toLowerCase();
-  const email    = document.getElementById('setup-email').value.trim();
-  const password = document.getElementById('setup-password').value;
-  const errEl    = document.getElementById('setup-error');
-
-  errEl.classList.add('hidden');
-  if (!nama || !username || !email || !password) { errEl.textContent = 'Semua field wajib diisi.'; errEl.classList.remove('hidden'); return; }
-  if (!USERNAME_REGEX.test(username)) { errEl.textContent = 'Username 3-20 karakter, hanya huruf kecil/angka/underscore.'; errEl.classList.remove('hidden'); return; }
-  if (password.length < 6) { errEl.textContent = 'Password minimal 6 karakter.'; errEl.classList.remove('hidden'); return; }
-
-  hideEl('btn-setup');
-  showEl('setup-loading');
-
-  try {
-    isSettingUp = true;
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await setDoc(doc(db, 'lk_users', cred.user.uid), {
-      uid: cred.user.uid, nama, username, email, role: 'developer', active: true,
-      createdAt: serverTimestamp(),
-    });
-    await setDoc(doc(db, 'lk_meta', 'config'), { initialized: true });
-    // Seed kategori sistem
-    await seedKategoriSistem();
-    isSettingUp = false;
-    // Trigger manual karena onAuthStateChanged sudah lewat
-    currentUser     = cred.user;
-    currentUserData = { uid: cred.user.uid, nama, username, email, role: 'developer', active: true };
-    currentRole     = 'developer';
-    setUserBadge(currentUserData);
-    applyRoleUI('developer');
-    startListeners();
-    showScreen('app');
-    navigateTo('dashboard');
-  } catch (e) {
-    isSettingUp = false;
-    errEl.textContent = friendlyError(e.code);
-    errEl.classList.remove('hidden');
-    showEl('btn-setup');
-    hideEl('setup-loading');
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // LOGIN SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
 document.getElementById('btn-login').addEventListener('click', doLogin);
@@ -412,23 +353,20 @@ async function doLogin() {
   const errEl      = document.getElementById('login-error');
   errEl.classList.add('hidden');
 
-  if (!identifier || !password) { errEl.textContent = 'Username/Email dan password wajib diisi.'; errEl.classList.remove('hidden'); return; }
+  if (!identifier || !password) { errEl.textContent = 'Email dan password wajib diisi.'; errEl.classList.remove('hidden'); return; }
 
   hideEl('btn-login');
   showEl('login-loading');
 
+  // Login lewat akun Harmoni — hanya email (data username tidak bisa dibaca sebelum login)
+  if (!identifier.includes('@')) {
+    errEl.textContent = 'Masukkan email akun Harmoni Anda.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   try {
-    let email = identifier;
-    // Kalau bukan email (tidak ada '@'), lookup email dari username
-    if (!identifier.includes('@')) {
-      const uname = identifier.toLowerCase();
-      const userDoc = await findUserByUsername(uname);
-      if (!userDoc || !userDoc.email) {
-        throw { code: 'auth/user-not-found' };
-      }
-      email = userDoc.email;
-    }
-    await signInWithEmailAndPassword(auth, email, password);
+    await signInWithEmailAndPassword(auth, identifier, password);
     // onAuthStateChanged handle selanjutnya — termasuk cek active
   } catch (e) {
     errEl.textContent = friendlyError(e.code);
@@ -447,6 +385,8 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
   currentUser     = null;
   currentUserData = null;
   currentRole     = null;
+  harmoniUsers    = [];
+  document.getElementById('backup-reminder').style.display = 'none';
   showScreen('login');
   document.getElementById('login-password').value = '';
   document.getElementById('login-error').classList.add('hidden');
@@ -457,16 +397,22 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 showScreen('loading');
 
+// Tolak login: keluar dari akun & kembalikan form login supaya bisa coba akun lain
+async function rejectLogin(msg) {
+  await signOut(auth).catch(() => {});
+  showScreen('login');
+  showEl('btn-login');
+  hideEl('login-loading');
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = msg;
+  errEl.classList.toggle('hidden', !msg);
+}
+
 onAuthStateChanged(auth, async (firebaseUser) => {
-  if (isSettingUp) return; // Tunggu setup selesai dulu
   if (!firebaseUser) {
-    // Tidak login — cek first-run
-    try {
-      const isFirst = await checkFirstRun();
-      showScreen(isFirst ? 'setup' : 'login');
-    } catch {
-      showScreen('login');
-    }
+    showScreen('login');
+    showEl('btn-login');
+    hideEl('login-loading');
     return;
   }
 
@@ -474,18 +420,14 @@ onAuthStateChanged(auth, async (firebaseUser) => {
   try {
     const userDoc = await getDoc(doc(authDb, 'users', firebaseUser.uid));
     if (!userDoc.exists()) {
-      await signOut(auth);
-      showScreen('login');
+      await rejectLogin('Akun tidak terdaftar di portal Harmoni.');
       return;
     }
     const rawData = userDoc.data();
 
     // Cek aktif
     if (!rawData.aktif) {
-      showScreen('login');
-      const errEl = document.getElementById('login-error');
-      errEl.textContent = 'Akun belum diaktifkan. Hubungi admin.';
-      errEl.classList.remove('hidden');
+      await rejectLogin('Akun belum diaktifkan. Hubungi admin.');
       return;
     }
 
@@ -496,10 +438,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     } else {
       const appAccess = rawData.apps?.laporan_keuangan;
       if (!appAccess?.akses) {
-        showScreen('login');
-        const errEl = document.getElementById('login-error');
-        errEl.textContent = 'Akun ini tidak memiliki akses ke Laporan Keuangan.';
-        errEl.classList.remove('hidden');
+        await rejectLogin('Akun ini tidak memiliki akses ke Laporan Keuangan.');
         return;
       }
       mappedRole = appAccess.role || 'kasir';
@@ -521,19 +460,28 @@ onAuthStateChanged(auth, async (firebaseUser) => {
 
   } catch (e) {
     console.error('Error loading user data:', e);
-    await signOut(auth);
-    showScreen('login');
+    await rejectLogin('Gagal memuat data akun. Periksa koneksi lalu coba lagi.');
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Realtime listeners (onSnapshot)
 // ═══════════════════════════════════════════════════════════════════════════════
+// onSnapshot dengan pesan error — tanpa ini, data yang gagal dimuat terlihat seperti kosong
+function onSnap(ref, cb) {
+  return onSnapshot(ref, cb, err => {
+    console.error('Listener gagal:', err);
+    toast(err.code === 'permission-denied'
+      ? 'Gagal memuat data: akun Anda tidak punya izin akses'
+      : 'Gagal memuat data: ' + err.message, 'error');
+  });
+}
+
 function startListeners() {
   stopListeners();
 
   // suppliers
-  unsubs.push(onSnapshot(query(collection(db, 'lk_suppliers'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_suppliers'), orderBy('createdAt', 'asc')), snap => {
     suppliers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     populateSupplierSelects();
     renderSupplier();
@@ -541,7 +489,7 @@ function startListeners() {
   }));
 
   // pembelian
-  unsubs.push(onSnapshot(query(collection(db, 'lk_pembelian'), orderBy('tgl', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_pembelian'), orderBy('tgl', 'desc')), snap => {
     pembelian = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPembelian();
     renderSupplier();
@@ -549,7 +497,7 @@ function startListeners() {
   }));
 
   // kasir
-  unsubs.push(onSnapshot(query(collection(db, 'lk_kasir'), orderBy('tgl', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_kasir'), orderBy('tgl', 'desc')), snap => {
     kasirData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderKasir();
     renderSupplier();
@@ -558,7 +506,7 @@ function startListeners() {
 
   // users portal Harmoni — rules hanya izinkan owner membaca semua user
   if (currentUserData?.isOwner) {
-    unsubs.push(onSnapshot(collection(authDb, 'users'), snap => {
+    unsubs.push(onSnap(collection(authDb, 'users'), snap => {
       harmoniUsers = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (a.nama || a.email || '').localeCompare(b.nama || b.email || ''));
@@ -567,13 +515,13 @@ function startListeners() {
   }
 
   // users (admin only — tapi kita tetap load untuk keperluan tampil nama)
-  unsubs.push(onSnapshot(query(collection(db, 'lk_users'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_users'), orderBy('createdAt', 'asc')), snap => {
     users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (currentRole === 'developer') renderUsers();
   }));
 
   // rekening
-  unsubs.push(onSnapshot(query(collection(db, 'lk_rekening'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_rekening'), orderBy('createdAt', 'asc')), snap => {
     rekening = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     populateRekeningSelects();
     renderRekening();
@@ -581,21 +529,21 @@ function startListeners() {
   }));
 
   // purchase orders
-  unsubs.push(onSnapshot(query(collection(db, 'lk_po'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_po'), orderBy('createdAt', 'desc')), snap => {
     poData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPO();
     renderDashboard();
   }));
 
   // anggaran lainnya
-  unsubs.push(onSnapshot(query(collection(db, 'lk_anggaran'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_anggaran'), orderBy('createdAt', 'desc')), snap => {
     anggaranData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderAnggaran();
     renderDashboard();
   }));
 
   // mutasi internal
-  unsubs.push(onSnapshot(query(collection(db, 'lk_mutasi'), orderBy('tgl', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_mutasi'), orderBy('tgl', 'desc')), snap => {
     mutasiData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderDashboard();
     renderRekening();
@@ -603,19 +551,19 @@ function startListeners() {
   }));
 
   // piutang
-  unsubs.push(onSnapshot(query(collection(db, 'lk_piutang'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_piutang'), orderBy('createdAt', 'desc')), snap => {
     piutangData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPiutang();
     renderDashboard();
   }));
-  unsubs.push(onSnapshot(query(collection(db, 'lk_piutang_bayar'), orderBy('createdAt', 'asc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_piutang_bayar'), orderBy('createdAt', 'asc')), snap => {
     piutangBayar = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPiutang();
     renderDashboard();
   }));
 
   // pengajuan pengeluaran (Pengurus → Kasir konfirmasi)
-  unsubs.push(onSnapshot(query(collection(db, 'lk_pengajuan_kas'), orderBy('createdAt', 'desc')), snap => {
+  unsubs.push(onSnap(query(collection(db, 'lk_pengajuan_kas'), orderBy('createdAt', 'desc')), snap => {
     pengajuanData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPengajuanPending();
     renderPengajuanRiwayat();
@@ -623,7 +571,7 @@ function startListeners() {
   }));
 
   // kategori (dinamis: sistem + custom + pending)
-  unsubs.push(onSnapshot(collection(db, 'lk_kategori'), async snap => {
+  unsubs.push(onSnap(collection(db, 'lk_kategori'), async snap => {
     kategoriData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     // Auto-seed: kalau kategori sistem belum ada (database lama), seed sekarang (admin only)
     if (currentRole === 'developer' && KATEGORI_SISTEM.some(k => !kategoriData.find(x => x.key === k.key))) {
@@ -641,7 +589,7 @@ function startListeners() {
   // settings (saldo awal)
   // Pengingat backup — untuk role yang boleh backup, muncul jika backup terakhir > 7 hari
   if (BACKUP_ROLES.includes(currentRole)) {
-    unsubs.push(onSnapshot(doc(db, 'lk_settings', 'backup'), snap => {
+    unsubs.push(onSnap(doc(db, 'lk_settings', 'backup'), snap => {
       const last = snap.data()?.lastAt?.toDate();
       const hari = last ? Math.floor((Date.now() - last) / 86400000) : null;
       const el   = document.getElementById('backup-reminder');
@@ -652,7 +600,7 @@ function startListeners() {
     }));
   }
 
-  unsubs.push(onSnapshot(doc(db, 'lk_settings', 'saldo-awal'), snap => {
+  unsubs.push(onSnap(doc(db, 'lk_settings', 'saldo-awal'), snap => {
     const d = snap.data() || {};
     saldoAwalTunai = Number(d.tunai || 0);
     // isi form input jika sudah ada
@@ -729,8 +677,11 @@ function supplierName(id) {
   return suppliers.find(s => s.id === id)?.nama || id || '-';
 }
 
+// Pembelian yang ditolak tidak dihitung sebagai hutang / total pembelian
+const pembelianAktif = () => pembelian.filter(p => p.statusApproval !== 'ditolak');
+
 function supplierStats(supId) {
-  const totalBeli  = pembelian
+  const totalBeli  = pembelianAktif()
     .filter(p => p.supplierId === supId)
     .reduce((a, p) => a + Number(p.total || 0), 0);
   const totalBayar = kasirData
@@ -763,7 +714,7 @@ function populateSupplierSelects() {
 function renderDashboard() {
   const totalMasuk    = kasirData.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalKeluar   = kasirData.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
-  const totalBeli     = pembelian.reduce((a, p) => a + Number(p.total || 0), 0);
+  const totalBeli     = pembelianAktif().reduce((a, p) => a + Number(p.total || 0), 0);
   const totalBayarSup = kasirData.filter(k => k.kategori === 'bayar-supplier').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalHutang   = suppliers.reduce((a, s) => a + supplierStats(s.id).hutang, 0);
   const totalSaldoAwalRekening = rekening.reduce((a, r) => a + Number(r.saldoAwal || 0), 0);
@@ -829,7 +780,7 @@ function renderDashboard() {
             .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
         + mutMasuk - mutKeluar;
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td><strong>${r.nama}</strong></td><td>${r.bank}${r.noRek ? ' · ' + r.noRek : ''}</td><td class="${s >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(s)}</strong></td>`;
+      tr.innerHTML = `<td><strong>${esc(r.nama)}</strong></td><td>${esc(r.bank)}${r.noRek ? ' · ' + esc(r.noRek) : ''}</td><td class="${s >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(s)}</strong></td>`;
       tbodySaldo.appendChild(tr);
     });
   }
@@ -845,8 +796,8 @@ function renderDashboard() {
     const st = supplierStats(s.id);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${s.nama}</strong></td>
-      <td>${s.asal}</td>
+      <td><strong>${esc(s.nama)}</strong></td>
+      <td>${esc(s.asal)}</td>
       <td>${rupiah(st.totalBeli)}</td>
       <td>${rupiah(st.totalBayar)}</td>
       <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
@@ -881,10 +832,10 @@ function renderSupplier() {
     const st = supplierStats(s.id);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${s.nama}</strong></td>
-      <td>${s.asal}</td>
-      <td>${s.jenis || '-'}</td>
-      <td>${s.hp || '-'}</td>
+      <td><strong>${esc(s.nama)}</strong></td>
+      <td>${esc(s.asal)}</td>
+      <td>${esc(s.jenis || '-')}</td>
+      <td>${esc(s.hp || '-')}</td>
       <td>${rupiah(st.totalBeli)}</td>
       <td>${rupiah(st.totalBayar)}</td>
       <td class="${st.hutang > 0 ? 'text-red' : 'text-green'}">${rupiah(st.hutang)}</td>
@@ -892,8 +843,8 @@ function renderSupplier() {
       <td>${inputByBadge(s)}</td>
       <td style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px">
-          <button class="btn-sm btn-sm-blue" data-edit-sup="${s.id}">✏️ Edit</button>
-          <button class="btn-sm btn-sm-red"  data-del-sup="${s.id}">Hapus</button>
+          <button class="btn-sm btn-sm-blue" data-edit-sup="${esc(s.id)}">✏️ Edit</button>
+          <button class="btn-sm btn-sm-red"  data-del-sup="${esc(s.id)}">Hapus</button>
         </div>
       </td>
     `;
@@ -953,7 +904,7 @@ document.getElementById('tbody-supplier').addEventListener('click', e => {
   const delId = e.target.dataset.delSup;
   if (!delId) return;
   const s = suppliers.find(x => x.id === delId);
-  confirmDelete(`Hapus supplier <strong>${s?.nama || ''}</strong>?`, async () => {
+  confirmDelete(`Hapus supplier <strong>${esc(s?.nama || '')}</strong>?`, async () => {
     try {
       await deleteDoc(doc(db, 'lk_suppliers', delId));
       toast('Supplier dihapus');
@@ -1042,13 +993,13 @@ function renderPembelian(filter = {}) {
 
     // Nota (foto / link)
     const notaLinks = [];
-    if (p.fotoNota)  notaLinks.push(`<a href="${p.fotoNota}"  target="_blank" class="link-bukti">📷 Foto</a>`);
-    if (p.linkNota)  notaLinks.push(`<a href="${p.linkNota}"  target="_blank" class="link-bukti">🔗 Link</a>`);
+    if (p.fotoNota)  notaLinks.push(`<a href="${safeUrl(p.fotoNota)}"  target="_blank" class="link-bukti">📷 Foto</a>`);
+    if (p.linkNota)  notaLinks.push(`<a href="${safeUrl(p.linkNota)}"  target="_blank" class="link-bukti">🔗 Link</a>`);
     const notaHtml = notaLinks.length ? notaLinks.join(' ') : '<span class="text-muted-sm">–</span>';
 
     // Bukti transfer cell
     const buktiHtml = p.buktiTransfer
-      ? `<a href="${p.buktiTransfer}" target="_blank" class="link-bukti">📎 Lihat</a>`
+      ? `<a href="${safeUrl(p.buktiTransfer)}" target="_blank" class="link-bukti">📎 Lihat</a>`
       : '<span class="text-muted-sm">–</span>';
 
     // Tombol aksi approval (hanya pengurus/admin)
@@ -1056,10 +1007,10 @@ function renderPembelian(filter = {}) {
     if (approvePerms) {
       if (status === 'menunggu') {
         approvalBtns = `
-          <button class="btn-sm btn-sm-green" data-approve-beli="${p.id}">✓ Setujui</button>
-          <button class="btn-sm btn-sm-red"   data-reject-beli="${p.id}">✗ Tolak</button>`;
+          <button class="btn-sm btn-sm-green" data-approve-beli="${esc(p.id)}">✓ Setujui</button>
+          <button class="btn-sm btn-sm-red"   data-reject-beli="${esc(p.id)}">✗ Tolak</button>`;
       }
-      approvalBtns += `<button class="btn-sm btn-sm-blue" data-upload-bukti="${p.id}" title="Upload bukti transfer">📎 Bukti</button>`;
+      approvalBtns += `<button class="btn-sm btn-sm-blue" data-upload-bukti="${esc(p.id)}" title="Upload bukti transfer">📎 Bukti</button>`;
     }
 
     // Badge siapa yang input
@@ -1067,22 +1018,22 @@ function renderPembelian(filter = {}) {
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${p.tgl}</td>
-      <td>${supplierName(p.supplierId)}</td>
-      <td>${p.jenis}</td>
-      <td>${p.qty || '–'}</td>
+      <td>${esc(p.tgl)}</td>
+      <td>${esc(supplierName(p.supplierId))}</td>
+      <td>${esc(p.jenis)}</td>
+      <td>${esc(p.qty || '–')}</td>
       <td>${p.harga ? rupiah(p.harga) : '–'}</td>
       <td><strong>${rupiah(p.total)}</strong></td>
       <td>${notaHtml}</td>
       <td>${bayarBadge}</td>
-      <td>${p.ket || '–'}</td>
+      <td>${esc(p.ket || '–')}</td>
       <td>${inputBadge}</td>
       <td>${statusBadge}</td>
       <td>${buktiHtml}</td>
       <td class="col-aksi" style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${approvalBtns}
-          <button class="btn-sm btn-sm-red" data-del-beli="${p.id}">🗑</button>
+          <button class="btn-sm btn-sm-red" data-del-beli="${esc(p.id)}">🗑</button>
         </div>
       </td>
     `;
@@ -1211,7 +1162,7 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
     bayarPembelianId = uploadId;
     document.getElementById('bayar-info-supplier').textContent = supplierName(p.supplierId);
     document.getElementById('bayar-info-total').textContent    = rupiah(p.total);
-    document.getElementById('bayar-tgl').value                 = today();
+    document.getElementById('bayar-sup-tgl').value             = today();
     document.getElementById('bayar-bukti-file').value          = '';
     document.getElementById('bayar-bukti-link').value          = '';
     document.getElementById('modal-bayar').classList.remove('hidden');
@@ -1230,7 +1181,7 @@ function closeBayarModal() {
 
 document.getElementById('btn-bayar-konfirm').addEventListener('click', async () => {
   if (!bayarPembelianId) return;
-  const tgl        = document.getElementById('bayar-tgl').value;
+  const tgl        = document.getElementById('bayar-sup-tgl').value;
   const rekeningId = document.getElementById('bayar-rekening').value;
   const file       = document.getElementById('bayar-bukti-file').files[0];
   const linkInput  = document.getElementById('bayar-bukti-link').value.trim();
@@ -1260,17 +1211,30 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
       buktiUrl = linkInput;
     }
 
+    // Pembelian yang sudah pernah dibayar cukup diperbarui buktinya —
+    // jangan buat entri kas kedua (pembayaran dobel)
+    const sudahDibayar = kasirData.some(k => k.autoFromBeli === bayarPembelianId);
+    const batch = writeBatch(db);
+
     // 2. Update pembelian: bukti + auto-approve
-    await updateDoc(doc(db, 'lk_pembelian', bayarPembelianId), {
+    batch.update(doc(db, 'lk_pembelian', bayarPembelianId), {
       buktiTransfer:   buktiUrl,
       statusApproval:  'disetujui',
-      approvedBy:      currentUser?.email || '',
+      approvedBy:      currentUser?.uid || '',
+      approvedNama:    currentUserData?.nama || '',
       approvedAt:      serverTimestamp(),
     });
 
+    if (sudahDibayar) {
+      await batch.commit();
+      toast('Bukti diperbarui (pembayaran sudah tercatat sebelumnya)');
+      closeBayarModal();
+      return;
+    }
+
     // 3. Buat entri kasir otomatis
     const via = rekeningId === 'tunai' ? 'tunai' : 'transfer';
-    await addDoc(collection(db, 'lk_kasir'), {
+    batch.set(doc(collection(db, 'lk_kasir')), {
       tgl,
       jenis:       'pengeluaran',
       kategori:    'bayar-supplier',
@@ -1283,6 +1247,7 @@ document.getElementById('btn-bayar-konfirm').addEventListener('click', async () 
       ...inputByFields(),
       createdAt:   serverTimestamp(),
     });
+    await batch.commit();
 
     toast('Pembayaran dikonfirmasi, saldo diperbarui ✓');
     closeBayarModal();
@@ -1306,11 +1271,11 @@ function renderMutasi() {
   data.forEach(m => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${m.tgl}</td>
-      <td><strong>${m.dariLabel || m.dari}</strong></td>
-      <td><strong>${m.keLabel || m.ke}</strong></td>
+      <td>${esc(m.tgl)}</td>
+      <td><strong>${esc(m.dariLabel || m.dari)}</strong></td>
+      <td><strong>${esc(m.keLabel || m.ke)}</strong></td>
       <td class="text-green"><strong>${rupiah(m.jumlah)}</strong></td>
-      <td>${m.ket || '–'}</td>
+      <td>${esc(m.ket || '–')}</td>
       <td>${inputByBadge(m)}</td>
     `;
     tbody.appendChild(tr);
@@ -1341,7 +1306,8 @@ function renderKasir(filter = {}) {
   data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   let masuk = 0, keluar = 0;
-  const isReadOnly = currentRole === 'pemilik';
+  // Hapus transaksi hanya Admin & pengurus (sesuai rules Firestore)
+  const canDelete = currentRole === 'developer' || currentRole === 'pengurus';
 
   if (!data.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="empty-note">Belum ada transaksi kas</td></tr>`;
@@ -1359,16 +1325,16 @@ function renderKasir(filter = {}) {
       const tr = document.createElement('tr');
       if (isNonBisnis) tr.classList.add('row-non-bisnis');
       tr.innerHTML = `
-        <td>${k.tgl}</td>
+        <td>${esc(k.tgl)}</td>
         <td>${jenisBadge}</td>
-        <td>${katLabel}${nbTag}</td>
-        <td>${k.supplierId ? supplierName(k.supplierId) : '-'}</td>
+        <td>${esc(katLabel)}${nbTag}</td>
+        <td>${k.supplierId ? esc(supplierName(k.supplierId)) : '-'}</td>
         <td class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(k.jumlah)}</strong></td>
-        <td>${!k.via || k.via === 'tunai' ? 'Tunai' : rekeningName(k.rekeningId)}</td>
-        <td>${k.ket || '-'}</td>
+        <td>${!k.via || k.via === 'tunai' ? 'Tunai' : esc(rekeningName(k.rekeningId))}</td>
+        <td>${esc(k.ket || '-')}</td>
         <td>${inputByBadge(k)}</td>
-        <td style="${isReadOnly ? 'display:none' : ''}">
-          <button class="btn-sm btn-sm-red" data-del-kas="${k.id}">Hapus</button>
+        <td style="${canDelete ? '' : 'display:none'}">
+          <button class="btn-sm btn-sm-red" data-del-kas="${esc(k.id)}">Hapus</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -1490,12 +1456,12 @@ function renderKasirAntrian() {
       : '<span class="badge badge-pengeluaran">Pengeluaran</span>';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${d.tgl}</td>
+      <td>${esc(d.tgl)}</td>
       <td>${jenisBadge}</td>
-      <td>${getKategoriLabel(d.kategori)}${d.piuNama ? ' — ' + d.piuNama : ''}</td>
+      <td>${esc(getKategoriLabel(d.kategori))}${d.piuNama ? ' — ' + esc(d.piuNama) : ''}</td>
       <td class="${d.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(d.jumlah)}</strong></td>
-      <td>${d.via === 'tunai' ? 'Tunai' : rekeningName(d.rekeningId)}</td>
-      <td>${d.ket || '-'}</td>
+      <td>${d.via === 'tunai' ? 'Tunai' : esc(rekeningName(d.rekeningId))}</td>
+      <td>${esc(d.ket || '-')}</td>
       <td><button class="btn-sm btn-sm-red" data-del-antrian="${i}">✕</button></td>
     `;
     tbody.appendChild(tr);
@@ -1611,7 +1577,7 @@ function renderLaporan() {
   const bulan  = document.getElementById('filter-laporan-bulan').value;
   if (!bulan) { output.innerHTML = '<p class="empty-note">Pilih bulan dan klik "Tampilkan Laporan"</p>'; return; }
 
-  const beliBulan  = pembelian.filter(p => monthOf(p.tgl) === bulan);
+  const beliBulan  = pembelianAktif().filter(p => monthOf(p.tgl) === bulan);
   const kasirBulan = kasirData.filter(k => monthOf(k.tgl) === bulan);
 
   const totalBeli     = beliBulan.reduce((a, p) => a + Number(p.total || 0), 0);
@@ -1633,7 +1599,7 @@ function renderLaporan() {
   keluarNonBisnis.forEach(k => { keluarNonBisnisKat[k.kategori] = (keluarNonBisnisKat[k.kategori] || 0) + Number(k.jumlah || 0); });
 
   // Hutang kumulatif per supplier s/d bulan ini
-  const allBeliUntil  = pembelian.filter(p => monthOf(p.tgl) <= bulan);
+  const allBeliUntil  = pembelianAktif().filter(p => monthOf(p.tgl) <= bulan);
   const allBayarUntil = kasirData.filter(k => k.kategori === 'bayar-supplier' && monthOf(k.tgl) <= bulan);
   const hutangRows = suppliers.map(s => {
     const beli  = allBeliUntil.filter(p => p.supplierId === s.id).reduce((a, p) => a + Number(p.total || 0), 0);
@@ -1651,7 +1617,7 @@ function renderLaporan() {
   html += `<div class="laporan-row"><span><strong>Pemasukan</strong></span></div>`;
   if (Object.keys(masukKat).length) {
     Object.entries(masukKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${getKategoriLabel(kat)}</span><span class="text-green">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${esc(getKategoriLabel(kat))}</span><span class="text-green">${rupiah(val)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pemasukan</span><span>Rp 0</span></div>`;
@@ -1660,7 +1626,7 @@ function renderLaporan() {
   html += `<div class="laporan-row"><span><strong>Pengeluaran Bisnis</strong></span></div>`;
   if (Object.keys(keluarBisnisKat).length) {
     Object.entries(keluarBisnisKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${getKategoriLabel(kat)}</span><span class="text-red">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${esc(getKategoriLabel(kat))}</span><span class="text-red">${rupiah(val)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran bisnis</span><span>Rp 0</span></div>`;
@@ -1669,7 +1635,7 @@ function renderLaporan() {
   html += `<div class="laporan-row" style="margin-top:8px"><span><strong>Pengeluaran Non-Bisnis</strong></span></div>`;
   if (Object.keys(keluarNonBisnisKat).length) {
     Object.entries(keluarNonBisnisKat).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${getKategoriLabel(kat)}</span><span class="text-amber">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${esc(getKategoriLabel(kat))}</span><span class="text-amber">${rupiah(val)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran non-bisnis</span><span>Rp 0</span></div>`;
@@ -1686,7 +1652,7 @@ function renderLaporan() {
   html += `<div class="laporan-section"><h3>2. Pembelian Barang Bulan Ini</h3>`;
   if (beliBulan.length) {
     [...beliBulan].sort((a, b) => String(b.tgl).localeCompare(String(a.tgl))).forEach(p => {
-      html += `<div class="laporan-row"><span>${p.tgl} — ${supplierName(p.supplierId)} — ${p.jenis} (${p.qty} pcs)</span><span>${rupiah(p.total)}</span></div>`;
+      html += `<div class="laporan-row"><span>${esc(p.tgl)} — ${esc(supplierName(p.supplierId))} — ${esc(p.jenis)}${p.qty ? ` (${esc(p.qty)} pcs)` : ''}</span><span>${rupiah(p.total)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row"><span>Tidak ada pembelian</span><span>Rp 0</span></div>`;
@@ -1699,7 +1665,7 @@ function renderLaporan() {
   if (hutangRows.length) {
     hutangRows.forEach(r => {
       html += `<div class="laporan-row">
-        <span>${r.nama} (${r.asal})</span>
+        <span>${esc(r.nama)} (${esc(r.asal)})</span>
         <span>Beli: ${rupiah(r.beli)} | Bayar: ${rupiah(r.bayar)} | <strong class="${r.hutang > 0 ? 'text-red' : 'text-green'}">Hutang: ${rupiah(r.hutang)}</strong></span>
       </div>`;
     });
@@ -1715,7 +1681,7 @@ function renderLaporan() {
   const bayarBulan = kasirBulan.filter(k => k.kategori === 'bayar-supplier');
   if (bayarBulan.length) {
     bayarBulan.forEach(k => {
-      html += `<div class="laporan-row"><span>${k.tgl} — ${supplierName(k.supplierId)}</span><span>${rupiah(k.jumlah)}</span></div>`;
+      html += `<div class="laporan-row"><span>${esc(k.tgl)} — ${esc(supplierName(k.supplierId))}</span><span>${rupiah(k.jumlah)}</span></div>`;
     });
   } else {
     html += `<div class="laporan-row"><span>Tidak ada pembayaran</span><span>Rp 0</span></div>`;
@@ -1744,7 +1710,7 @@ function renderLaporan() {
     piutangAktif.forEach(p => {
       const { dibayar, diambil } = piutangStats(p.id);
       const sisa = Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${p.nama}</span><span class="text-red">${rupiah(sisa)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${esc(p.nama)}</span><span class="text-red">${rupiah(sisa)}</span></div>`;
     });
   }
   html += `<div class="laporan-total"><span>Total Piutang Belum Lunas</span><span class="text-red">${rupiah(totalPiuAktif)}</span></div>`;
@@ -1757,7 +1723,7 @@ function renderLaporanTahunan(output) {
   const tahun = document.getElementById('filter-laporan-tahun').value;
   if (!tahun) { output.innerHTML = '<p class="empty-note">Pilih tahun dan klik "Tampilkan Laporan"</p>'; return; }
 
-  const beliTahun  = pembelian.filter(p => String(p.tgl || '').startsWith(tahun + '-'));
+  const beliTahun  = pembelianAktif().filter(p => String(p.tgl || '').startsWith(tahun + '-'));
   const kasirTahun = kasirData.filter(k => String(k.tgl || '').startsWith(tahun + '-'));
 
   const totalBeli            = beliTahun.reduce((a, p) => a + Number(p.total || 0), 0);
@@ -1789,7 +1755,7 @@ function renderLaporanTahunan(output) {
   });
 
   const endOfYear    = `${tahun}-12`;
-  const allBeliUntil  = pembelian.filter(p => monthOf(p.tgl) <= endOfYear);
+  const allBeliUntil  = pembelianAktif().filter(p => monthOf(p.tgl) <= endOfYear);
   const allBayarUntil = kasirData.filter(k => k.kategori === 'bayar-supplier' && monthOf(k.tgl) <= endOfYear);
   const hutangRows = suppliers.map(s => {
     const beli  = allBeliUntil.filter(p => p.supplierId === s.id).reduce((a, p) => a + Number(p.total || 0), 0);
@@ -1814,7 +1780,7 @@ function renderLaporanTahunan(output) {
   if (Object.keys(keluarBisnisKat).length) {
     Object.entries(keluarBisnisKat).sort((a, b) => b[1] - a[1]).forEach(([kat, val]) => {
       const pct = totalKeluarBisnis > 0 ? ((val / totalKeluarBisnis) * 100).toFixed(1) : '0.0';
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${getKategoriLabel(kat)}</span><span class="text-red">${rupiah(val)} <small style="color:#9ca3af">(${pct}%)</small></span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${esc(getKategoriLabel(kat))}</span><span class="text-red">${rupiah(val)} <small style="color:#9ca3af">(${pct}%)</small></span></div>`;
     });
   } else {
     html += `<div class="laporan-row" style="padding-left:16px"><span>Tidak ada pengeluaran bisnis</span><span>Rp 0</span></div>`;
@@ -1823,7 +1789,7 @@ function renderLaporanTahunan(output) {
   if (Object.keys(keluarNonBisnisKat).length) {
     html += `<div class="laporan-row" style="margin-top:8px"><span><strong>Pengeluaran Non-Bisnis</strong></span></div>`;
     Object.entries(keluarNonBisnisKat).sort((a, b) => b[1] - a[1]).forEach(([kat, val]) => {
-      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${getKategoriLabel(kat)}</span><span class="text-amber">${rupiah(val)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px;background:#fffbeb"><span>👤 ${esc(getKategoriLabel(kat))}</span><span class="text-amber">${rupiah(val)}</span></div>`;
     });
     html += `<div class="laporan-row"><span><em>Total Non-Bisnis</em></span><span class="text-amber"><strong>${rupiah(totalKeluarNonBisnis)}</strong></span></div>`;
   }
@@ -1863,7 +1829,7 @@ function renderLaporanTahunan(output) {
   html += `<div class="laporan-section"><h3>4. Posisi Hutang Supplier (s/d Akhir ${tahun})</h3>`;
   if (hutangRows.length) {
     hutangRows.forEach(r => {
-      html += `<div class="laporan-row"><span>${r.nama} (${r.asal})</span>
+      html += `<div class="laporan-row"><span>${esc(r.nama)} (${esc(r.asal)})</span>
         <span>Beli: ${rupiah(r.beli)} | Bayar: ${rupiah(r.bayar)} | <strong class="${r.hutang > 0 ? 'text-red' : 'text-green'}">Hutang: ${rupiah(r.hutang)}</strong></span></div>`;
     });
     const totalHutang = hutangRows.reduce((a, r) => a + r.hutang, 0);
@@ -1894,7 +1860,7 @@ function renderLaporanTahunan(output) {
     piutangAktif.forEach(p => {
       const { dibayar, diambil } = piutangStats(p.id);
       const sisa = Math.max(0, Number(p.jumlah || 0) + diambil - dibayar);
-      html += `<div class="laporan-row" style="padding-left:16px"><span>${p.nama}</span><span class="text-red">${rupiah(sisa)}</span></div>`;
+      html += `<div class="laporan-row" style="padding-left:16px"><span>${esc(p.nama)}</span><span class="text-red">${rupiah(sisa)}</span></div>`;
     });
   }
   html += `<div class="laporan-total"><span>Total Piutang Belum Lunas</span><span class="text-red">${rupiah(totalPiuAktif)}</span></div>`;
@@ -1931,19 +1897,19 @@ function renderUsers() {
     const akses   = isOwner || lk.akses === true;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${u.nama || '-'}</strong>${u.id === currentUser?.uid ? ' <em style="color:var(--text-muted);font-size:12px">(Anda)</em>' : ''}</td>
-      <td>${u.email || '-'}</td>
+      <td><strong>${esc(u.nama || '-')}</strong>${u.id === currentUser?.uid ? ' <em style="color:var(--text-muted);font-size:12px">(Anda)</em>' : ''}</td>
+      <td>${esc(u.email || '-')}</td>
       <td>${u.aktif
         ? '<span class="badge badge-aktif">Aktif</span>'
         : '<span class="badge badge-nonaktif">Nonaktif</span>'}</td>
       <td>${isOwner
         ? '<span class="role-badge role-developer">owner</span>'
-        : `<select data-lk-role="${u.id}" ${akses ? '' : 'disabled'}>
+        : `<select data-lk-role="${esc(u.id)}" ${akses ? '' : 'disabled'}>
             ${LK_ROLES.map(r => `<option value="${r}" ${(lk.role || 'kasir') === r ? 'selected' : ''}>${r}</option>`).join('')}
           </select>`}</td>
       <td>${isOwner
         ? '<em style="color:var(--text-muted);font-size:12px">Selalu punya akses</em>'
-        : `<button class="btn-sm ${akses ? 'btn-sm-orange' : 'btn-sm-blue'}" data-lk-akses="${u.id}" data-akses="${akses}">
+        : `<button class="btn-sm ${akses ? 'btn-sm-orange' : 'btn-sm-blue'}" data-lk-akses="${esc(u.id)}" data-akses="${akses}">
             ${akses ? 'Cabut Akses' : 'Beri Akses'}
           </button>`}</td>
     `;
@@ -1970,7 +1936,7 @@ document.getElementById('tbody-users').addEventListener('click', async e => {
   const punyaAkses = e.target.dataset.akses === 'true';
   const u      = harmoniUsers.find(x => x.id === id);
   const action = punyaAkses ? 'Cabut akses' : 'Beri akses';
-  confirmDelete(`${action} Laporan Keuangan untuk <strong>${u?.nama || u?.email || ''}</strong>?`, async () => {
+  confirmDelete(`${action} Laporan Keuangan untuk <strong>${esc(u?.nama || u?.email || '')}</strong>?`, async () => {
     const patch = { 'apps.laporan_keuangan.akses': !punyaAkses };
     if (!punyaAkses && !u?.apps?.laporan_keuangan?.role) patch['apps.laporan_keuangan.role'] = 'kasir';
     try {
@@ -2103,13 +2069,13 @@ function renderPendingKategori() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${tgl}</td>
-      <td><strong>${k.label}</strong>${k.tipe === 'non-bisnis' ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
+      <td><strong>${esc(k.label)}</strong>${k.tipe === 'non-bisnis' ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
       <td>${jenisLabel}</td>
-      <td><span style="font-size:12px;font-weight:600">${k.pengajuNama || '–'}</span><br><span style="font-size:10px;color:#9ca3af">${k.pengajuRole || ''}</span></td>
-      <td>${k.ket || '<span class="text-muted-sm">–</span>'}</td>
+      <td><span style="font-size:12px;font-weight:600">${esc(k.pengajuNama || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(k.pengajuRole || '')}</span></td>
+      <td>${k.ket ? esc(k.ket) : '<span class="text-muted-sm">–</span>'}</td>
       <td>
-        <button class="btn-sm btn-sm-green" data-approve-kat="${k.key}">Approve</button>
-        <button class="btn-sm btn-sm-red" data-reject-kat="${k.key}">Tolak</button>
+        <button class="btn-sm btn-sm-green" data-approve-kat="${esc(k.key)}">Approve</button>
+        <button class="btn-sm btn-sm-red" data-reject-kat="${esc(k.key)}">Tolak</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -2131,16 +2097,16 @@ function renderKategoriAktif() {
     const tipeBadge = k.tipe === 'non-bisnis'
       ? '<span class="badge badge-non-bisnis">Non-Bisnis</span>'
       : '<span class="badge badge-lunas">Bisnis</span>';
-    const sumber = k.isSystem ? '<span class="text-muted-sm">🔒 Sistem</span>' : `<span style="font-size:12px">👤 ${k.pengajuNama || '–'}</span>`;
+    const sumber = k.isSystem ? '<span class="text-muted-sm">🔒 Sistem</span>' : `<span style="font-size:12px">👤 ${esc(k.pengajuNama || '–')}</span>`;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${k.label}</strong></td>
+      <td><strong>${esc(k.label)}</strong></td>
       <td>${jenisLabel}</td>
       <td>${tipeBadge}</td>
       <td>${sumber}</td>
       <td>${k.isSystem
         ? '<em style="color:var(--text-muted);font-size:12px">Terkunci</em>'
-        : `<button class="btn-sm btn-sm-red" data-del-kat="${k.key}">Hapus</button>`}</td>
+        : `<button class="btn-sm btn-sm-red" data-del-kat="${esc(k.key)}">Hapus</button>`}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -2186,7 +2152,7 @@ document.getElementById('tbody-kategori-aktif')?.addEventListener('click', async
     toast('Kategori sedang dipakai transaksi, tidak bisa dihapus', 'error');
     return;
   }
-  confirmDelete(`Hapus kategori <strong>${k.label}</strong>?`, async () => {
+  confirmDelete(`Hapus kategori <strong>${esc(k.label)}</strong>?`, async () => {
     try {
       await deleteDoc(doc(db, 'lk_kategori', key));
       toast('Kategori dihapus');
@@ -2275,7 +2241,7 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
   if (!['developer', 'pengurus'].includes(currentRole)) { toast('Tidak ada akses', 'error'); return; }
   const tgl       = document.getElementById('pgj-tgl').value;
   const kategori  = document.getElementById('pgj-kategori').value;
-  const jumlah    = Number(document.getElementById('pgj-jumlah').value);
+  const jumlah    = parseRibuan(document.getElementById('pgj-jumlah').value);
   const supplierId  = kategori === 'bayar-supplier' ? document.getElementById('pgj-supplier').value : null;
   const via         = document.getElementById('pgj-via').value;
   const rekeningId  = via === 'transfer' ? document.getElementById('pgj-rekening').value : null;
@@ -2332,16 +2298,16 @@ function renderPengajuanPending() {
     const tr = document.createElement('tr');
     if (isNonBisnis) tr.classList.add('row-non-bisnis');
     tr.innerHTML = `
-      <td>${p.tgl}</td>
-      <td>${katLabel}${isNonBisnis ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
-      <td>${supLabel}</td>
+      <td>${esc(p.tgl)}</td>
+      <td>${esc(katLabel)}${isNonBisnis ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
+      <td>${esc(supLabel)}</td>
       <td class="text-red"><strong>${rupiah(p.jumlah)}</strong></td>
-      <td>${viaLabel}</td>
-      <td>${p.ket || '–'}</td>
-      <td><span style="font-size:12px;font-weight:600">${p.pengajuNama || '–'}</span><br><span style="font-size:10px;color:#9ca3af">${p.pengajuRole || ''}</span></td>
+      <td>${esc(viaLabel)}</td>
+      <td>${esc(p.ket || '–')}</td>
+      <td><span style="font-size:12px;font-weight:600">${esc(p.pengajuNama || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(p.pengajuRole || '')}</span></td>
       <td class="col-pengajuan-aksi" style="${canKonfirmasi ? '' : 'display:none'}">
-        <button class="btn-sm btn-sm-green" data-konfirmasi-pgj="${p.id}">✓ Konfirmasi</button>
-        <button class="btn-sm btn-sm-red" data-tolak-pgj="${p.id}">Tolak</button>
+        <button class="btn-sm btn-sm-green" data-konfirmasi-pgj="${esc(p.id)}">✓ Konfirmasi</button>
+        <button class="btn-sm btn-sm-red" data-tolak-pgj="${esc(p.id)}">Tolak</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -2363,17 +2329,17 @@ function renderPengajuanRiwayat() {
     let statusBadge = '';
     if (p.status === 'pending')  statusBadge = '<span class="badge badge-po-pending">Pending</span>';
     if (p.status === 'done')     statusBadge = '<span class="badge badge-lunas">✓ Disetujui</span>';
-    if (p.status === 'rejected') statusBadge = `<span class="badge badge-hutang">Ditolak</span>${p.rejectReason ? `<br><small style="color:#9ca3af">${p.rejectReason}</small>` : ''}`;
+    if (p.status === 'rejected') statusBadge = `<span class="badge badge-hutang">Ditolak</span>${p.rejectReason ? `<br><small style="color:#9ca3af">${esc(p.rejectReason)}</small>` : ''}`;
     const konfirm = p.konfirmasiNama
-      ? `<span style="font-size:12px">${p.konfirmasiNama}</span>`
+      ? `<span style="font-size:12px">${esc(p.konfirmasiNama)}</span>`
       : '<span class="text-muted-sm">–</span>';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${p.tgl}</td>
-      <td>${katLabel}</td>
+      <td>${esc(p.tgl)}</td>
+      <td>${esc(katLabel)}</td>
       <td><strong>${rupiah(p.jumlah)}</strong></td>
-      <td>${viaLabel}</td>
-      <td><span style="font-size:12px">${p.pengajuNama || '–'}</span></td>
+      <td>${esc(viaLabel)}</td>
+      <td><span style="font-size:12px">${esc(p.pengajuNama || '–')}</span></td>
       <td>${statusBadge}</td>
       <td>${konfirm}</td>
     `;
@@ -2393,10 +2359,16 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
   if (!p) return;
 
   if (konfId) {
-    confirmDelete(`Konfirmasi pengajuan <strong>${getKategoriLabel(p.kategori)}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong>?<br>Ini akan masuk sebagai pengeluaran kas.`, async () => {
+    confirmDelete(`Konfirmasi pengajuan <strong>${esc(getKategoriLabel(p.kategori))}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong>?<br>Ini akan masuk sebagai pengeluaran kas.`, async () => {
       try {
-        // 1. Buat entry di kasir collection (pengeluaran)
-        const kasirRef = await addDoc(collection(db, 'lk_kasir'), {
+        // Transaksi: cegah konfirmasi dobel kalau dua orang menekan bersamaan
+        const pgjRef   = doc(db, 'lk_pengajuan_kas', p.id);
+        const kasirRef = doc(collection(db, 'lk_kasir'));
+        await runTransaction(db, async tx => {
+          const cur = await tx.get(pgjRef);
+          if (cur.data()?.status !== 'pending') throw new Error('Pengajuan ini sudah diproses');
+          // 1. Buat entry di kasir collection (pengeluaran)
+          tx.set(kasirRef, {
           tgl: p.tgl,
           jenis: 'pengeluaran',
           kategori: p.kategori,
@@ -2411,14 +2383,15 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
           sumberPengajuanId: p.id,
           sumberPengajuanOleh: p.pengajuNama || '',
           createdAt: serverTimestamp(),
-        });
-        // 2. Update pengajuan jadi done
-        await updateDoc(doc(db, 'lk_pengajuan_kas', p.id), {
-          status: 'done',
-          konfirmasiId: currentUser.uid,
-          konfirmasiNama: currentUserData?.nama || '',
-          kasirDocId: kasirRef.id,
-          doneAt: serverTimestamp(),
+          });
+          // 2. Update pengajuan jadi done
+          tx.update(pgjRef, {
+            status: 'done',
+            konfirmasiId: currentUser.uid,
+            konfirmasiNama: currentUserData?.nama || '',
+            kasirDocId: kasirRef.id,
+            doneAt: serverTimestamp(),
+          });
         });
         toast('Pengajuan dikonfirmasi & masuk ke kas');
       } catch (err) {
@@ -2550,7 +2523,10 @@ function friendlyError(code) {
 async function generatePONumber() {
   const year  = new Date().getFullYear();
   const month = String(new Date().getMonth() + 1).padStart(2, '0');
-  const seq   = poData.filter(p => String(p.noPO || '').startsWith(`PO-${year}`)).length + 1;
+  // Pakai nomor terbesar + 1 (bukan jumlah PO) supaya tidak dobel setelah ada PO dihapus
+  const seq   = poData
+    .filter(p => String(p.noPO || '').startsWith(`PO-${year}`))
+    .reduce((max, p) => Math.max(max, Number(String(p.noPO).split('-').pop()) || 0), 0) + 1;
   return `PO-${year}${month}-${String(seq).padStart(3, '0')}`;
 }
 
@@ -2558,7 +2534,7 @@ function addItemRow(nama = '', qty = '', harga = '') {
   const tbody = document.getElementById('tbody-po-items');
   const tr = document.createElement('tr');
   tr.innerHTML = `
-    <td><input type="text" class="po-item-nama" placeholder="Nama barang" value="${nama}" /></td>
+    <td><input type="text" class="po-item-nama" placeholder="Nama barang" value="${esc(nama)}" /></td>
     <td><input type="number" class="po-item-qty" placeholder="0" min="0" value="${qty}" /></td>
     <td><input type="number" class="po-item-harga" placeholder="0" min="0" value="${harga}" /></td>
     <td><input type="text" class="po-item-total" readonly placeholder="Rp 0" /></td>
@@ -2667,26 +2643,26 @@ function renderPO(filter = {}) {
   tbody.innerHTML = '';
   data.forEach(po => {
     const itemSummary = (po.items || []).map(i => `${i.nama} (${i.qty}x)`).join(', ');
-    const fotoCell    = po.fotoUrl ? `<a href="${po.fotoUrl}" target="_blank" class="btn-sm btn-sm-blue">Lihat</a>` : '-';
+    const fotoCell    = po.fotoUrl ? `<a href="${safeUrl(po.fotoUrl)}" target="_blank" class="btn-sm btn-sm-blue">Lihat</a>` : '-';
     let aksi = '';
     if (!isReadOnly) {
       if (po.status === 'pending') {
-        aksi += `<button class="btn-sm btn-sm-blue" data-po-status="${po.id}" data-new-status="dikirim" style="margin:1px">Kirim</button>`;
-        aksi += `<button class="btn-sm btn-sm-red"  data-po-status="${po.id}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
+        aksi += `<button class="btn-sm btn-sm-blue" data-po-status="${esc(po.id)}" data-new-status="dikirim" style="margin:1px">Kirim</button>`;
+        aksi += `<button class="btn-sm btn-sm-red"  data-po-status="${esc(po.id)}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
       } else if (po.status === 'dikirim') {
-        aksi += `<button class="btn-sm btn-sm-green" data-po-selesai="${po.id}" style="margin:1px">Selesai</button>`;
-        aksi += `<button class="btn-sm btn-sm-red"   data-po-status="${po.id}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
+        aksi += `<button class="btn-sm btn-sm-green" data-po-selesai="${esc(po.id)}" style="margin:1px">Selesai</button>`;
+        aksi += `<button class="btn-sm btn-sm-red"   data-po-status="${esc(po.id)}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
       }
       if (po.status === 'pending' || po.status === 'dikirim') {
-        aksi += `<button class="btn-sm btn-sm-red" data-del-po="${po.id}" style="margin:1px">Hapus</button>`;
+        aksi += `<button class="btn-sm btn-sm-red" data-del-po="${esc(po.id)}" style="margin:1px">Hapus</button>`;
       }
     }
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${po.noPO}</strong></td>
-      <td>${po.tgl}</td>
-      <td>${supplierName(po.supplierId)}</td>
-      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${itemSummary}">${itemSummary}</td>
+      <td><strong>${esc(po.noPO)}</strong></td>
+      <td>${esc(po.tgl)}</td>
+      <td>${esc(supplierName(po.supplierId))}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(itemSummary)}">${esc(itemSummary)}</td>
       <td><strong>${rupiah(po.totalNilai)}</strong></td>
       <td>${statusBadge[po.status] || po.status}</td>
       <td>${fotoCell}</td>
@@ -2703,7 +2679,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
     const newStatus = e.target.dataset.newStatus;
     const po = poData.find(p => p.id === statusId);
     const label = newStatus === 'dikirim' ? 'Tandai Terkirim' : 'Batalkan PO';
-    confirmDelete(`${label} PO <strong>${po?.noPO || ''}</strong>?`, async () => {
+    confirmDelete(`${label} PO <strong>${esc(po?.noPO || '')}</strong>?`, async () => {
       try { await updateDoc(doc(db, 'lk_po', statusId), { status: newStatus }); toast('PO diperbarui'); }
       catch (err) { toast('Gagal: ' + err.message, 'error'); }
     }, label);
@@ -2714,20 +2690,25 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
   if (selesaiId) {
     const po = poData.find(p => p.id === selesaiId);
     confirmDelete(
-      `Selesaikan PO <strong>${po?.noPO || ''}</strong>?<br><small style="color:var(--text-muted)">${(po?.items||[]).length} item akan masuk ke data Pembelian.</small>`,
+      `Selesaikan PO <strong>${esc(po?.noPO || '')}</strong>?<br><small style="color:var(--text-muted)">${(po?.items||[]).length} item akan masuk ke data Pembelian.</small>`,
       async () => {
         try {
-          await Promise.all((po.items || []).map(item =>
-            addDoc(collection(db, 'lk_pembelian'), {
+          // Transaksi: item masuk Pembelian sekali saja, walau tombol ditekan dua kali
+          const poRef = doc(db, 'lk_po', selesaiId);
+          await runTransaction(db, async tx => {
+            const cur = await tx.get(poRef);
+            if (cur.data()?.status !== 'dikirim') throw new Error('PO ini sudah diproses');
+            (po.items || []).forEach(item => tx.set(doc(collection(db, 'lk_pembelian')), {
               tgl: po.tgl, supplierId: po.supplierId,
               jenis: item.nama, qty: item.qty, harga: item.harga, total: item.total,
               caraBayar: po.caraBayar || 'hutang',
               ket: `Dari PO ${po.noPO}`,
+              statusApproval: 'menunggu',
               createdAt: serverTimestamp(),
               ...inputByFields(),
-            })
-          ));
-          await updateDoc(doc(db, 'lk_po', selesaiId), { status: 'selesai' });
+            }));
+            tx.update(poRef, { status: 'selesai' });
+          });
           toast(`PO ${po.noPO} selesai — ${po.items.length} item masuk ke Pembelian`);
         } catch (err) { toast('Gagal: ' + err.message, 'error'); }
       }, 'Selesaikan'
@@ -2738,7 +2719,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
   const delId = e.target.dataset.delPo;
   if (delId) {
     const po = poData.find(p => p.id === delId);
-    confirmDelete(`Hapus PO <strong>${po?.noPO || ''}</strong>?`, async () => {
+    confirmDelete(`Hapus PO <strong>${esc(po?.noPO || '')}</strong>?`, async () => {
       try { await deleteDoc(doc(db, 'lk_po', delId)); toast('PO dihapus'); }
       catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
     });
@@ -2776,23 +2757,23 @@ function renderAnggaran() {
     const st  = ANGGARAN_STATUS[a.status] || ANGGARAN_STATUS.rencana;
     const tr  = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${a.nama}</strong></td>
-      <td>${a.kategori || '–'}</td>
+      <td><strong>${esc(a.nama)}</strong></td>
+      <td>${esc(a.kategori || '–')}</td>
       <td><strong>${rupiah(a.target || 0)}</strong></td>
-      <td>${a.tgl || '–'}</td>
+      <td>${esc(a.tgl || '–')}</td>
       <td><span class="badge ${st.badge}">${st.label}</span></td>
-      <td>${a.ket || '–'}</td>
+      <td>${esc(a.ket || '–')}</td>
       <td>${inputByBadge(a)}</td>
       <td style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${a.status !== 'selesai' && a.status !== 'dibatalkan' ? `
-            <select class="ang-status-select" data-ang-id="${a.id}" style="border:1.5px solid var(--gray-border);border-radius:6px;padding:3px 6px;font-size:12px;background:var(--gray-light)">
+            <select class="ang-status-select" data-ang-id="${esc(a.id)}" style="border:1.5px solid var(--gray-border);border-radius:6px;padding:3px 6px;font-size:12px;background:var(--gray-light)">
               <option value="rencana"    ${a.status === 'rencana'   ? 'selected' : ''}>Rencana</option>
               <option value="disetujui"  ${a.status === 'disetujui' ? 'selected' : ''}>Disetujui</option>
               <option value="selesai"    >Selesai</option>
               <option value="dibatalkan" >Batalkan</option>
             </select>` : ''}
-          <button class="btn-sm btn-sm-red" data-del-ang="${a.id}">Hapus</button>
+          <button class="btn-sm btn-sm-red" data-del-ang="${esc(a.id)}">Hapus</button>
         </div>
       </td>
     `;
@@ -2891,8 +2872,8 @@ function renderPiutang() {
     const pct = totalPinjaman > 0 ? Math.min(100, Math.round(dibayar / totalPinjaman * 100)) : 0;
     const tr  = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${p.nama}</strong>${p.ket ? `<br><small style="color:var(--text-muted)">${p.ket}</small>` : ''}</td>
-      <td>${p.tgl || '–'}</td>
+      <td><strong>${esc(p.nama)}</strong>${p.ket ? `<br><small style="color:var(--text-muted)">${esc(p.ket)}</small>` : ''}</td>
+      <td>${esc(p.tgl || '–')}</td>
       <td>${rupiah(totalPinjaman)}${diambil > 0 ? `<br><small style="color:#0891b2">+${rupiah(diambil)} ambil lagi</small>` : ''}</td>
       <td>
         ${rupiah(dibayar)}
@@ -2907,10 +2888,10 @@ function renderPiutang() {
       <td>${inputByBadge(p)}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
-          <button class="btn-sm btn-sm-gray" data-riwayat-piu="${p.id}">📋 Riwayat</button>
-          ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${p.id}" data-nama="${p.nama}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
-          ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-orange" data-ambil-lagi="${p.id}" data-nama="${p.nama}">💸 Ambil Lagi</button>` : ''}
-          ${!isReadOnly ? `<button class="btn-sm btn-sm-red" data-del-piutang="${p.id}">Hapus</button>` : ''}
+          <button class="btn-sm btn-sm-gray" data-riwayat-piu="${esc(p.id)}">📋 Riwayat</button>
+          ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${esc(p.id)}" data-nama="${esc(p.nama)}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
+          ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-orange" data-ambil-lagi="${esc(p.id)}" data-nama="${esc(p.nama)}">💸 Ambil Lagi</button>` : ''}
+          ${!isReadOnly ? `<button class="btn-sm btn-sm-red" data-del-piutang="${esc(p.id)}">Hapus</button>` : ''}
         </div>
       </td>
     `;
@@ -2922,7 +2903,7 @@ function renderPiutang() {
     trDetail.style.display = 'none';
     trDetail.innerHTML = `<td colspan="10" style="padding:0;background:#f8fafc">
       <div style="padding:12px 16px">
-        <strong style="font-size:13px;color:#0891b2">📋 Riwayat Pembayaran — ${p.nama}</strong>
+        <strong style="font-size:13px;color:#0891b2">📋 Riwayat Pembayaran — ${esc(p.nama)}</strong>
         <table style="width:100%;margin-top:8px;font-size:12px;border-collapse:collapse">
           <thead>
             <tr style="background:#e0f2fe;color:#075985">
@@ -2932,7 +2913,7 @@ function renderPiutang() {
               <th style="padding:6px 8px;text-align:left;border-radius:0 4px 4px 0">Diinput Oleh</th>
             </tr>
           </thead>
-          <tbody id="riwayat-piu-${p.id}">
+          <tbody id="riwayat-piu-${esc(p.id)}">
             <tr><td colspan="4" style="padding:8px;color:#9ca3af;text-align:center">Memuat…</td></tr>
           </tbody>
         </table>
@@ -2987,7 +2968,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
           const isAmbil = b.type === 'ambil';
           return `
           <tr style="border-top:1px solid #e2e8f0;background:${isAmbil ? '#fff7ed' : 'transparent'}">
-            <td style="padding:6px 8px">${b.tgl || '–'}</td>
+            <td style="padding:6px 8px">${esc(b.tgl || '–')}</td>
             <td style="padding:6px 8px;text-align:right;font-weight:600;color:${isAmbil ? '#d97706' : '#16a34a'}">
               ${isAmbil ? '−' : '+'}${rupiah(b.jumlah)}
             </td>
@@ -2995,9 +2976,9 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
               ${isAmbil
                 ? '<span style="background:#fef3c7;color:#92400e;font-size:11px;padding:2px 6px;border-radius:4px">💸 Ambil</span>'
                 : '<span style="background:#dcfce7;color:#166534;font-size:11px;padding:2px 6px;border-radius:4px">✓ Bayar</span>'}
-              ${b.ket ? `<span style="color:#6b7280;margin-left:4px">${b.ket}</span>` : ''}
+              ${b.ket ? `<span style="color:#6b7280;margin-left:4px">${esc(b.ket)}</span>` : ''}
             </td>
-            <td style="padding:6px 8px;color:#6b7280">${b.inputByNama || b.inputBy || '–'}</td>
+            <td style="padding:6px 8px;color:#6b7280">${esc(b.inputByNama || b.inputBy || '–')}</td>
           </tr>`;
         }).join('');
       }
@@ -3039,7 +3020,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
   const delId = e.target.dataset.delPiutang;
   if (!delId) return;
   const p = piutangData.find(x => x.id === delId);
-  confirmDelete(`Hapus piutang <strong>${p?.nama || ''}</strong>? Riwayat bayar ikut terhapus.`, async () => {
+  confirmDelete(`Hapus piutang <strong>${esc(p?.nama || '')}</strong>? Riwayat bayar ikut terhapus.`, async () => {
     try {
       await deleteDoc(doc(db, 'lk_piutang', delId));
       // hapus semua bayar terkait
@@ -3082,7 +3063,6 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
 
 // Simpan pengambilan tambahan (ambil lagi)
 let ambilLagiId = null;
-document.getElementById('tbody-piutang').addEventListener('click', e => {}, { capture: true });
 
 document.getElementById('panel-catat-bayar').insertAdjacentHTML('afterend', `
   <div id="panel-ambil-lagi" class="form-card" style="display:none;margin-top:16px;border-top-color:#f59e0b">
@@ -3164,18 +3144,18 @@ function renderRekening() {
       + mutMasuk - mutKeluar;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${r.nama}</strong></td>
-      <td>${r.bank}</td>
-      <td>${r.noRek || '–'}</td>
-      <td class="cell-saldo-awal" data-rek-id="${r.id}">
+      <td><strong>${esc(r.nama)}</strong></td>
+      <td>${esc(r.bank)}</td>
+      <td>${esc(r.noRek || '–')}</td>
+      <td class="cell-saldo-awal" data-rek-id="${esc(r.id)}">
         <div class="saldo-awal-display" style="display:flex;align-items:center;gap:6px">
           <span>${rupiah(saldoAwal)}</span>
-          <button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${r.id}" data-current="${saldoAwal}" title="Ubah saldo awal">✏️</button>
+          <button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${esc(r.id)}" data-current="${saldoAwal}" title="Ubah saldo awal">✏️</button>
         </div>
       </td>
       <td class="${saldoSkrng >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoSkrng)}</strong></td>
       <td>
-        <button class="btn-sm btn-sm-red" data-del-rek="${r.id}">Hapus</button>
+        <button class="btn-sm btn-sm-red" data-del-rek="${esc(r.id)}">Hapus</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -3212,7 +3192,7 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
   const delId = e.target.dataset.delRek;
   if (delId) {
     const r = rekening.find(x => x.id === delId);
-    confirmDelete(`Hapus rekening <strong>${r?.nama || ''}</strong>?<br><small style="color:var(--text-muted)">Riwayat transaksi tidak ikut terhapus.</small>`, async () => {
+    confirmDelete(`Hapus rekening <strong>${esc(r?.nama || '')}</strong>?<br><small style="color:var(--text-muted)">Riwayat transaksi tidak ikut terhapus.</small>`, async () => {
       try { await deleteDoc(doc(db, 'lk_rekening', delId)); toast('Rekening dihapus'); }
       catch (err) { toast('Gagal menghapus: ' + err.message, 'error'); }
     });

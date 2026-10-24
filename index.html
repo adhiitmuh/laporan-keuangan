@@ -24,11 +24,11 @@
         <span class="brand-icon">🏪</span>
         <h1>Laporan Keuangan Toko Harmonis Sentral</h1>
       </div>
-      <p class="login-subtitle">Masuk dengan akun Anda</p>
+      <p class="login-subtitle">Masuk dengan akun Harmoni Anda</p>
       <div id="login-error" class="login-error hidden"></div>
       <div class="form-group">
-        <label>Username atau Email</label>
-        <input type="text" id="login-email" placeholder="username atau email@toko.com" autocomplete="username" />
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="email akun Harmoni" autocomplete="username" />
       </div>
       <div class="form-group">
         <label>Password</label>
@@ -38,42 +38,6 @@
       <div id="login-loading" class="login-loading hidden">
         <div class="spinner"></div>
         <span>Sedang masuk…</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════
-       FIRST-RUN SETUP (jika collection users kosong)
-  ═══════════════════════════════════════════════════════ -->
-  <div id="setup-screen" class="login-screen hidden">
-    <div class="login-card">
-      <div class="login-brand">
-        <span class="brand-icon">🏪</span>
-        <h1>Setup Pertama</h1>
-      </div>
-      <p class="login-subtitle">Buat akun Admin pertama untuk memulai</p>
-      <div id="setup-error" class="login-error hidden"></div>
-      <div class="form-group">
-        <label>Nama Admin</label>
-        <input type="text" id="setup-nama" placeholder="Nama lengkap" />
-      </div>
-      <div class="form-group">
-        <label>Username</label>
-        <input type="text" id="setup-username" placeholder="admin" autocomplete="off" />
-        <small style="font-size:11px;color:var(--text-muted);margin-top:2px">3–20 karakter, huruf kecil, angka, underscore</small>
-      </div>
-      <div class="form-group">
-        <label>Email</label>
-        <input type="email" id="setup-email" placeholder="admin@toko.com" />
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="setup-password" placeholder="Min. 6 karakter" />
-      </div>
-      <button class="btn-primary btn-block" id="btn-setup">Buat Admin &amp; Mulai</button>
-      <div id="setup-loading" class="login-loading hidden">
-        <div class="spinner"></div>
-        <span>Membuat akun…</span>
       </div>
     </div>
   </div>
@@ -463,7 +427,7 @@
             </div>
             <div class="form-group">
               <label>Jumlah (Rp)</label>
-              <input type="number" id="pgj-jumlah" placeholder="0" min="0" />
+              <input type="text" inputmode="numeric" id="pgj-jumlah" placeholder="0" />
             </div>
             <div class="form-group">
               <label>Via</label>
@@ -1111,6 +1075,7 @@
       </div>
       <div class="modal-body">
         <div id="pw-error" class="login-error hidden" style="margin-bottom:12px"></div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Ini password akun Harmoni Anda — berlaku untuk semua aplikasi Harmoni, bukan hanya Laporan Keuangan.</p>
         <div class="form-group" style="margin-bottom:12px">
           <label>Password Lama</label>
           <input type="password" id="pw-lama" placeholder="Password saat ini" autocomplete="current-password" />
@@ -1147,7 +1112,7 @@
         </div>
         <div class="form-group" style="margin-bottom:12px">
           <label>Tanggal Bayar</label>
-          <input type="date" id="bayar-tgl" />
+          <input type="date" id="bayar-sup-tgl" />
         </div>
         <div class="form-group" style="margin-bottom:12px">
           <label>Bayar dari</label>
