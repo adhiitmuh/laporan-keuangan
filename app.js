@@ -159,6 +159,7 @@ const KATEGORI_SISTEM = [
   { key: 'penjualan',      label: 'Penjualan',          jenis: 'pemasukan',   tipe: 'bisnis' },
   { key: 'bayar-supplier', label: 'Bayar Supplier',     jenis: 'pengeluaran', tipe: 'bisnis' },
   { key: 'piutang',        label: 'Piutang / Pinjaman', jenis: 'pengeluaran', tipe: 'bisnis' },
+  { key: 'terima-piutang', label: 'Penerimaan Piutang', jenis: 'pemasukan',   tipe: 'bisnis' },
   { key: 'gaji',           label: 'Gaji Karyawan',      jenis: 'pengeluaran', tipe: 'bisnis' },
   { key: 'operasional',    label: 'Operasional',        jenis: 'pengeluaran', tipe: 'bisnis' },
   { key: 'lainnya',        label: 'Lainnya',            jenis: 'both',        tipe: 'bisnis' },
@@ -656,6 +657,25 @@ function populateRekeningSelects() {
     });
     if (prevBayar) bayarRekSel.value = prevBayar;
   }
+
+  // Dropdown kas untuk cicilan piutang & ambil lagi (Tunai + rekening + tidak dicatat)
+  ['bayar-piu-sumber', 'ambil-sumber'].forEach(selId => {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    const prevVal = sel.value;
+    sel.innerHTML = '<option value="tunai">💵 Tunai</option>';
+    rekening.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `🏦 ${r.nama} (${r.bank})`;
+      sel.appendChild(opt);
+    });
+    const none = document.createElement('option');
+    none.value = 'none';
+    none.textContent = '— Tidak dicatat ke kas';
+    sel.appendChild(none);
+    sel.value = prevVal || 'tunai';
+  });
 
   // Dropdown mutasi: dari & ke (Tunai + semua rekening)
   ['mut-dari', 'mut-ke'].forEach(selId => {
@@ -1264,9 +1284,10 @@ function renderMutasi() {
   if (!tbody) return;
   const data = [...mutasiData].sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-note">Belum ada riwayat transfer</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">Belum ada riwayat transfer</td></tr>';
     return;
   }
+  const canDelete = currentRole === 'developer' || currentRole === 'pengurus';
   tbody.innerHTML = '';
   data.forEach(m => {
     const tr = document.createElement('tr');
@@ -1277,10 +1298,25 @@ function renderMutasi() {
       <td class="text-green"><strong>${rupiah(m.jumlah)}</strong></td>
       <td>${esc(m.ket || '–')}</td>
       <td>${inputByBadge(m)}</td>
+      <td>${canDelete ? `<button class="btn-sm btn-sm-red" data-del-mutasi="${esc(m.id)}">Hapus</button>` : ''}</td>
     `;
     tbody.appendChild(tr);
   });
 }
+
+document.getElementById('tbody-mutasi').addEventListener('click', e => {
+  const id = e.target.dataset.delMutasi;
+  if (!id) return;
+  const m = mutasiData.find(x => x.id === id);
+  confirmDelete(`Hapus transfer <strong>${esc(m?.dariLabel || '')} → ${esc(m?.keLabel || '')}</strong> sebesar <strong>${rupiah(m?.jumlah)}</strong>?<br><small style="color:var(--text-muted)">Saldo kedua akun kembali seperti sebelum transfer.</small>`, async () => {
+    try {
+      await deleteDoc(doc(db, 'lk_mutasi', id));
+      toast('Transfer dihapus');
+    } catch (err) {
+      toast('Gagal menghapus: ' + err.message, 'error');
+    }
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // KASIR page
@@ -1533,9 +1569,22 @@ document.getElementById('btn-filter-kas').addEventListener('click', () => {
 document.getElementById('tbody-kasir').addEventListener('click', e => {
   const id = e.target.dataset.delKas;
   if (!id) return;
-  confirmDelete('Hapus transaksi ini?', async () => {
+  const k = kasirData.find(x => x.id === id);
+  const dariPiutang = !!k?.sumberPiutangBayarId;
+  confirmDelete(dariPiutang
+    ? 'Hapus transaksi ini?<br><small style="color:var(--text-muted)">Catatan cicilan/ambil di halaman Piutang ikut terhapus.</small>'
+    : 'Hapus transaksi ini?', async () => {
     try {
-      await deleteDoc(doc(db, 'lk_kasir', id));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'lk_kasir', id));
+      if (dariPiutang) {
+        batch.delete(doc(db, 'lk_piutang_bayar', k.sumberPiutangBayarId));
+        // Cicilan dihapus → piutang yang tadinya lunas bisa aktif lagi
+        if (piutangData.find(p => p.id === k.sumberPiutangId)?.status === 'lunas') {
+          batch.update(doc(db, 'lk_piutang', k.sumberPiutangId), { status: 'aktif' });
+        }
+      }
+      await batch.commit();
       toast('Transaksi dihapus');
     } catch (err) {
       toast('Gagal menghapus: ' + err.message, 'error');
@@ -2995,6 +3044,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
     document.getElementById('ambil-tgl').value    = today();
     document.getElementById('ambil-jumlah').value = '';
     document.getElementById('ambil-ket').value    = '';
+    document.getElementById('ambil-sumber').value = 'tunai';
     document.getElementById('panel-catat-bayar').style.display = 'none';
     const panel = document.getElementById('panel-ambil-lagi');
     panel.style.display = '';
@@ -3011,6 +3061,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
     document.getElementById('bayar-tgl').value    = today();
     document.getElementById('bayar-jumlah').value = cicilan > 0 ? formatRibuan(cicilan) : '';
     document.getElementById('bayar-ket').value    = '';
+    document.getElementById('bayar-piu-sumber').value = 'tunai';
     document.getElementById('panel-ambil-lagi').style.display = 'none';
     const panel = document.getElementById('panel-catat-bayar');
     panel.style.display = '';
@@ -3020,16 +3071,50 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
   const delId = e.target.dataset.delPiutang;
   if (!delId) return;
   const p = piutangData.find(x => x.id === delId);
-  confirmDelete(`Hapus piutang <strong>${esc(p?.nama || '')}</strong>? Riwayat bayar ikut terhapus.`, async () => {
+  confirmDelete(`Hapus piutang <strong>${esc(p?.nama || '')}</strong>? Riwayat bayar beserta entri kas cicilannya ikut terhapus.`, async () => {
     try {
       await deleteDoc(doc(db, 'lk_piutang', delId));
-      // hapus semua bayar terkait
-      const q = await getDocs(query(collection(db, 'lk_piutang_bayar')));
-      await Promise.all(q.docs.filter(d => d.data().piutangId === delId).map(d => deleteDoc(d.ref)));
+      // hapus semua bayar terkait + entri kas yang dibuat otomatis dari cicilan/ambil lagi
+      await Promise.all([
+        ...piutangBayar.filter(b => b.piutangId === delId).map(b => deleteDoc(doc(db, 'lk_piutang_bayar', b.id))),
+        ...kasirData.filter(k => k.sumberPiutangId === delId).map(k => deleteDoc(doc(db, 'lk_kasir', k.id))),
+      ]);
       toast('Piutang dihapus');
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
   });
 });
+
+// Catat cicilan (type 'bayar') atau pengambilan tambahan (type 'ambil') piutang,
+// sekaligus entri kas: cicilan = pemasukan, ambil lagi = pengeluaran.
+// sumber 'none' = hanya catat di piutang, saldo kas tidak berubah.
+async function simpanPiutangBayar({ piuId, jumlah, tgl, type, ket, sumber, nama }) {
+  const batch    = writeBatch(db);
+  const bayarRef = doc(collection(db, 'lk_piutang_bayar'));
+  const kasirRef = sumber !== 'none' ? doc(collection(db, 'lk_kasir')) : null;
+  batch.set(bayarRef, {
+    piutangId: piuId, jumlah, tgl, type, ket,
+    kasirDocId: kasirRef?.id || null,
+    ...inputByFields(),
+    createdAt: serverTimestamp(),
+  });
+  if (kasirRef) {
+    const isBayar = type === 'bayar';
+    batch.set(kasirRef, {
+      tgl, jumlah,
+      jenis:      isBayar ? 'pemasukan' : 'pengeluaran',
+      kategori:   isBayar ? 'terima-piutang' : 'piutang',
+      supplierId: null,
+      via:        sumber === 'tunai' ? 'tunai' : 'transfer',
+      rekeningId: sumber === 'tunai' ? null : sumber,
+      ket:        `Auto — ${isBayar ? 'cicilan' : 'ambil lagi'} piutang ${nama}${ket ? ` (${ket})` : ''}`,
+      sumberPiutangId:      piuId,
+      sumberPiutangBayarId: bayarRef.id,
+      ...inputByFields(),
+      createdAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
 
 // Simpan pembayaran
 document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', async () => {
@@ -3038,14 +3123,14 @@ document.getElementById('btn-simpan-bayar-piutang').addEventListener('click', as
   const tgl    = document.getElementById('bayar-tgl').value;
   if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'lk_piutang_bayar'), {
-      piutangId: piuId, jumlah, tgl, type: 'bayar',
-      ket: document.getElementById('bayar-ket').value.trim(),
-      ...inputByFields(),
-      createdAt: serverTimestamp(),
+    const p = piutangData.find(x => x.id === piuId);
+    await simpanPiutangBayar({
+      piuId, jumlah, tgl, type: 'bayar',
+      ket:    document.getElementById('bayar-ket').value.trim(),
+      sumber: document.getElementById('bayar-piu-sumber').value,
+      nama:   p?.nama || '',
     });
     // Cek apakah sudah lunas
-    const p = piutangData.find(x => x.id === piuId);
     if (p) {
       const { dibayar, diambil } = piutangStats(piuId);
       const totalBayarBaru = dibayar + jumlah;
@@ -3078,6 +3163,10 @@ document.getElementById('panel-catat-bayar').insertAdjacentHTML('afterend', `
         <input type="text" inputmode="numeric" id="ambil-jumlah" placeholder="0" />
       </div>
       <div class="form-group">
+        <label>Diambil dari</label>
+        <select id="ambil-sumber"></select>
+      </div>
+      <div class="form-group">
         <label>Keterangan</label>
         <input type="text" id="ambil-ket" placeholder="Opsional" />
       </div>
@@ -3107,11 +3196,11 @@ document.getElementById('btn-simpan-ambil').addEventListener('click', async () =
   const tgl    = document.getElementById('ambil-tgl').value;
   if (!jumlah || !tgl) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db, 'lk_piutang_bayar'), {
-      piutangId: piuId, jumlah, tgl, type: 'ambil',
-      ket: document.getElementById('ambil-ket').value.trim(),
-      ...inputByFields(),
-      createdAt: serverTimestamp(),
+    await simpanPiutangBayar({
+      piuId, jumlah, tgl, type: 'ambil',
+      ket:    document.getElementById('ambil-ket').value.trim(),
+      sumber: document.getElementById('ambil-sumber').value,
+      nama:   piutangData.find(x => x.id === piuId)?.nama || '',
     });
     toast('Pengambilan berhasil dicatat ✓');
     document.getElementById('panel-ambil-lagi').style.display = 'none';
