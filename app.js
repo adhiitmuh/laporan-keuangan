@@ -27,6 +27,7 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3243,21 +3244,79 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKUP & EXPORT
 // ═══════════════════════════════════════════════════════════════════════════════
-window.exportBackupJSON = function() {
-  const backup = {
-    exportDate: new Date().toISOString(),
-    collections: {
-      suppliers, pembelian, kasirData, poData, rekening,
-      piutangData, piutangBayar,
-    },
-  };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `LapKeu_backup_${today()}.json`;
-  a.click();
-  toast('Backup JSON berhasil diunduh');
+// Semua koleksi data app (tanpa prefix lk_) — dipakai backup, restore & migrasi
+const LK_KOLEKSI = [
+  'suppliers', 'pembelian', 'kasir', 'users', 'rekening', 'po', 'anggaran', 'mutasi',
+  'piutang', 'piutang_bayar', 'pengajuan_kas', 'kategori', 'settings',
+];
+
+// Timestamp Firestore tidak bisa langsung jadi JSON — simpan sebagai { __ts: millis }
+const encodeBackup = v =>
+  v instanceof Timestamp ? { __ts: v.toMillis() }
+  : Array.isArray(v) ? v.map(encodeBackup)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, encodeBackup(x)]))
+  : v;
+const decodeBackup = v =>
+  Array.isArray(v) ? v.map(decodeBackup)
+  : v && typeof v === 'object'
+    ? ('__ts' in v ? Timestamp.fromMillis(v.__ts) : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, decodeBackup(x)])))
+  : v;
+
+window.exportBackupJSON = async function() {
+  try {
+    toast('Menyiapkan backup...');
+    const collections = {};
+    let total = 0;
+    for (const name of LK_KOLEKSI) {
+      const snap = await getDocs(collection(db, 'lk_' + name));
+      collections[name] = Object.fromEntries(snap.docs.map(d => [d.id, encodeBackup(d.data())]));
+      total += snap.size;
+    }
+    const backup = { app: 'laporan-keuangan', version: 2, exportDate: new Date().toISOString(), collections };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `LapKeu_backup_${today()}.json`;
+    a.click();
+    toast(`Backup berhasil diunduh (${total} data)`);
+  } catch (e) {
+    toast('Backup gagal: ' + e.message, 'error');
+  }
 };
+
+document.getElementById('restore-file')?.addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (currentRole !== 'developer') { toast('Hanya Admin', 'error'); return; }
+  let backup;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch {
+    toast('File bukan backup yang valid', 'error');
+    return;
+  }
+  if (backup?.app !== 'laporan-keuangan' || backup.version !== 2) {
+    toast('Format backup tidak dikenali (hanya backup versi baru yang bisa di-restore)', 'error');
+    return;
+  }
+  const total = Object.values(backup.collections).reduce((a, c) => a + Object.keys(c).length, 0);
+  const tgl   = new Date(backup.exportDate).toLocaleString('id-ID');
+  confirmDelete(`Restore <strong>${total}</strong> data dari backup tanggal <strong>${tgl}</strong>?<br><br>Data dengan ID yang sama akan dikembalikan ke isi saat backup. Data yang dibuat setelah backup tidak dihapus.`, async () => {
+    try {
+      toast('Restore berjalan, jangan tutup halaman...');
+      for (const [name, docs] of Object.entries(backup.collections)) {
+        if (!LK_KOLEKSI.includes(name)) continue;
+        for (const [id, data] of Object.entries(docs)) {
+          await setDoc(doc(db, 'lk_' + name, id), decodeBackup(data));
+        }
+      }
+      toast(`Restore selesai — ${total} data dikembalikan`);
+    } catch (err) {
+      toast('Restore gagal: ' + err.message, 'error');
+    }
+  }, 'Restore');
+});
 
 window.exportExcelFinansial = function() {
   if (typeof XLSX === 'undefined') { toast('Library Excel belum dimuat, coba lagi', 'error'); return; }
@@ -3317,10 +3376,6 @@ document.getElementById('piu-tgl').value  = today();
 // ═══════════════════════════════════════════════════════════════════════════════
 // MIGRASI DATA — salin koleksi dari laporan-keuangan-hs ke harmoni-indonesia (lk_*)
 // ═══════════════════════════════════════════════════════════════════════════════
-const MIGRASI_KOLEKSI = [
-  'suppliers', 'pembelian', 'kasir', 'users', 'rekening', 'po', 'anggaran', 'mutasi',
-  'piutang', 'piutang_bayar', 'pengajuan_kas', 'kategori', 'settings',
-];
 
 document.getElementById('btn-migrasi')?.addEventListener('click', async () => {
   if (currentRole !== 'developer') { toast('Hanya Admin', 'error'); return; }
@@ -3338,7 +3393,7 @@ document.getElementById('btn-migrasi')?.addEventListener('click', async () => {
     log('Login ke project lama...');
     await signInWithEmailAndPassword(oldAuth, email, password);
     let total = 0;
-    for (const name of MIGRASI_KOLEKSI) {
+    for (const name of LK_KOLEKSI) {
       const snap = await getDocs(collection(oldDb, name));
       for (const d of snap.docs) {
         await setDoc(doc(db, 'lk_' + name, d.id), d.data());

@@ -1004,10 +1004,12 @@
         <!-- ─── BACKUP & EXPORT ──────────────────────────────────── -->
         <h3 class="section-title" style="margin-top:32px">Backup & Export Data</h3>
         <div class="form-card" style="margin-bottom:0">
-          <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Download seluruh data sebagai file backup. Lakukan secara rutin untuk menghindari kehilangan data.</p>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Download seluruh data sebagai file backup, lalu simpan di iCloud/Google Drive. Lakukan rutin, misalnya seminggu sekali. Restore mengembalikan data dari file backup.</p>
           <div style="display:flex;flex-wrap:wrap;gap:10px">
             <button class="btn-primary" onclick="window.exportBackupJSON()">💾 Backup JSON (Semua Data)</button>
+            <button class="btn-outline" onclick="document.getElementById('restore-file').click()">♻️ Restore dari Backup</button>
             <button class="btn-outline" onclick="window.exportExcelFinansial()">📊 Export Excel Keuangan</button>
+            <input type="file" id="restore-file" accept=".json,application/json" hidden />
           </div>
         </div>
       </section>
