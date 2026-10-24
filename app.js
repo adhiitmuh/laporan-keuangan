@@ -636,7 +636,7 @@ function startListeners() {
     saldoAwalTunai = Number(d.tunai || 0);
     // isi form input jika sudah ada
     const inputEl = document.getElementById('saldo-awal-tunai');
-    if (inputEl && !inputEl.dataset.dirty) inputEl.value = saldoAwalTunai || '';
+    if (inputEl && !inputEl.dataset.dirty) inputEl.value = saldoAwalTunai ? formatRibuan(saldoAwalTunai) : '';
     renderDashboard();
     renderRekening();
   }));
