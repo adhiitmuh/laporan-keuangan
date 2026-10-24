@@ -114,6 +114,11 @@
 
     <main class="content">
 
+      <div id="backup-reminder" style="display:none;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:14px">
+        <span id="backup-reminder-text"></span>
+        <button class="btn-primary" onclick="window.exportBackupJSON()">💾 Backup Sekarang</button>
+      </div>
+
       <!-- ─── DASHBOARD ─────────────────────────────────── -->
       <section id="page-dashboard" class="page active">
         <div class="dash-welcome">

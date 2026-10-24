@@ -635,6 +635,19 @@ function startListeners() {
   }));
 
   // settings (saldo awal)
+  // Pengingat backup — hanya untuk Admin, muncul jika backup terakhir > 7 hari
+  if (currentRole === 'developer') {
+    unsubs.push(onSnapshot(doc(db, 'lk_settings', 'backup'), snap => {
+      const last = snap.data()?.lastAt?.toDate();
+      const hari = last ? Math.floor((Date.now() - last) / 86400000) : null;
+      const el   = document.getElementById('backup-reminder');
+      el.style.display = hari !== null && hari < BACKUP_INTERVAL_HARI ? 'none' : 'flex';
+      document.getElementById('backup-reminder-text').textContent = last
+        ? `⚠️ Sudah ${hari} hari sejak backup terakhir (${last.toLocaleDateString('id-ID')}). Yuk backup data sekarang.`
+        : '⚠️ Data belum pernah di-backup. Yuk backup data sekarang.';
+    }));
+  }
+
   unsubs.push(onSnapshot(doc(db, 'lk_settings', 'saldo-awal'), snap => {
     const d = snap.data() || {};
     saldoAwalTunai = Number(d.tunai || 0);
@@ -3244,6 +3257,8 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKUP & EXPORT
 // ═══════════════════════════════════════════════════════════════════════════════
+const BACKUP_INTERVAL_HARI = 7;
+
 // Semua koleksi data app (tanpa prefix lk_) — dipakai backup, restore & migrasi
 const LK_KOLEKSI = [
   'suppliers', 'pembelian', 'kasir', 'users', 'rekening', 'po', 'anggaran', 'mutasi',
@@ -3278,6 +3293,9 @@ window.exportBackupJSON = async function() {
     a.href = URL.createObjectURL(blob);
     a.download = `LapKeu_backup_${today()}.json`;
     a.click();
+    await setDoc(doc(db, 'lk_settings', 'backup'), {
+      lastAt: serverTimestamp(), byNama: currentUserData?.nama || currentUser?.email || '',
+    });
     toast(`Backup berhasil diunduh (${total} data)`);
   } catch (e) {
     toast('Backup gagal: ' + e.message, 'error');
