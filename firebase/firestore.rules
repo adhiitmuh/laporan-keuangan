@@ -48,10 +48,61 @@ service cloud.firestore {
         || (r == 'kasir' && koleksi in ['lk_kasir', 'lk_pembelian', 'lk_piutang', 'lk_pengajuan_kas', 'lk_kategori']);
     }
 
+    // Transaksi: hanya bisa diubah/dihapus oleh role yang menginputnya (Admin bisa semua)
+    function lkTransaksi(k) {
+      return k in ['lk_kasir', 'lk_pembelian', 'lk_mutasi', 'lk_piutang', 'lk_piutang_bayar',
+                   'lk_po', 'lk_anggaran', 'lk_pengajuan_kas'];
+    }
+    function lkMilikRole() {
+      return resource.data.get('inputByRole', resource.data.get('pengajuRole', '')) == lkRole();
+    }
+    function lkUbah() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    function lkKeyApproval() {
+      return ['statusApproval', 'approvedBy', 'approvedNama', 'approvedAt', 'buktiTransfer'];
+    }
+    function lkKeyKonfirmasi() {
+      return ['status', 'konfirmasiId', 'konfirmasiNama', 'kasirDocId', 'doneAt', 'rejectReason'];
+    }
+    // Alur kerja lintas role: pengurus menyetujui pembelian & ubah status piutang/PO/anggaran,
+    // kasir mengonfirmasi pengajuan — hanya field status, bukan isi transaksi
+    function lkBolehAlurKerja(k) {
+      let r = lkRole();
+      return (k == 'lk_pembelian' && r == 'pengurus' && lkUbah().hasOnly(lkKeyApproval()))
+        || (k == 'lk_pengajuan_kas' && r == 'kasir' && lkUbah().hasOnly(lkKeyKonfirmasi()))
+        || (k in ['lk_piutang', 'lk_po', 'lk_anggaran'] && r == 'pengurus' && lkUbah().hasOnly(['status']));
+    }
+    // Ubah transaksi milik role sendiri — kecuali kasir menyetujui pembeliannya sendiri
+    // atau pengurus mengonfirmasi pengajuannya sendiri
+    function lkBolehUbahMilik(k) {
+      let r = lkRole();
+      return lkMilikRole()
+        && !(k == 'lk_pembelian' && r == 'kasir' && lkUbah().hasAny(lkKeyApproval()))
+        && !(k == 'lk_pengajuan_kas' && r == 'pengurus' && lkUbah().hasAny(lkKeyKonfirmasi()));
+    }
+    // Data baru wajib tercatat atas role pembuatnya; kasir tidak bisa membuat
+    // pembelian yang langsung disetujui; kategori baru dari non-Admin berstatus pending
+    function lkBolehBuat(k) {
+      let d = request.resource.data;
+      return lkRole() == 'developer'
+        || ((!lkTransaksi(k) || d.get('inputByRole', '') == lkRole())
+            && !(k == 'lk_pembelian' && d.get('statusApproval', 'menunggu') != 'menunggu')
+            && !(k == 'lk_kategori' && d.get('status', '') != 'pending'));
+    }
+
     match /{koleksi}/{docId} {
       allow read: if koleksi.matches('lk_.*') && lkBolehAkses();
-      allow create, update: if koleksi.matches('lk_.*') && lkBolehAkses() && lkBolehTulis(koleksi);
-      allow delete: if koleksi.matches('lk_.*') && lkBolehAkses() && lkRole() in ['developer', 'pengurus'];
+      allow create: if koleksi.matches('lk_.*') && lkBolehAkses()
+        && lkBolehTulis(koleksi) && lkBolehBuat(koleksi);
+      allow update: if koleksi.matches('lk_.*') && lkBolehAkses() && lkBolehTulis(koleksi)
+        && (lkRole() == 'developer'
+            || (koleksi != 'lk_kategori'
+                && (!lkTransaksi(koleksi) || lkBolehUbahMilik(koleksi) || lkBolehAlurKerja(koleksi))));
+      allow delete: if koleksi.matches('lk_.*') && lkBolehAkses()
+        && (lkRole() == 'developer'
+            || (lkRole() == 'pengurus' && koleksi != 'lk_kategori'
+                && (!lkTransaksi(koleksi) || lkMilikRole())));
     }
   }
 }

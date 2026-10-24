@@ -153,6 +153,18 @@ function inputByBadge(item) {
   return `<span style="font-size:11px;color:${roleColor};font-weight:600">👤 ${esc(nama)}</span>${role ? `<br><span style="font-size:10px;color:#9ca3af">${esc(role)}</span>` : ''}`;
 }
 
+// Hak ubah/hapus transaksi — sama dengan rules Firestore:
+// Admin bisa semua; pengurus & kasir hanya transaksi yang diinput role-nya sendiri;
+// hapus hanya Admin & pengurus. Data lama tanpa inputByRole hanya bisa diubah Admin.
+const roleInput = item => item?.inputByRole || item?.pengajuRole || '';
+function canModify(item) {
+  return currentRole === 'developer'
+    || (['pengurus', 'kasir'].includes(currentRole) && roleInput(item) === currentRole);
+}
+function canRemove(item) {
+  return currentRole === 'developer' || (currentRole === 'pengurus' && roleInput(item) === 'pengurus');
+}
+
 // Kategori bawaan sistem — di-seed ke Firestore saat first-run setup.
 // Status='approved', isSystem=true (tidak bisa dihapus).
 const KATEGORI_SISTEM = [
@@ -659,7 +671,7 @@ function populateRekeningSelects() {
   }
 
   // Dropdown kas untuk cicilan piutang & ambil lagi (Tunai + rekening + tidak dicatat)
-  ['bayar-piu-sumber', 'ambil-sumber'].forEach(selId => {
+  ['bayar-piu-sumber', 'ambil-sumber', 'piu-sumber'].forEach(selId => {
     const sel = document.getElementById(selId);
     if (!sel) return;
     const prevVal = sel.value;
@@ -974,7 +986,12 @@ function calcBeliTotal() {
 document.getElementById('beli-qty').addEventListener('input', calcBeliTotal);
 document.getElementById('beli-harga').addEventListener('input', calcBeliTotal);
 
-function renderPembelian(filter = {}) {
+// Filter tabel disimpan supaya tidak ter-reset saat data realtime masuk
+let pembelianFilter = {};
+let kasirFilter     = {};
+let poFilter        = {};
+
+function renderPembelian(filter = pembelianFilter) {
   const tbody = document.getElementById('tbody-pembelian');
   if (!tbody) return;
   let data = [...pembelian];
@@ -1053,7 +1070,8 @@ function renderPembelian(filter = {}) {
       <td class="col-aksi" style="${isReadOnly ? 'display:none' : ''}">
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           ${approvalBtns}
-          <button class="btn-sm btn-sm-red" data-del-beli="${esc(p.id)}">🗑</button>
+          ${canEditBeli(p) ? `<button class="btn-sm btn-sm-blue" data-edit-beli="${esc(p.id)}">✏️ Edit</button>` : ''}
+          ${canRemove(p) ? `<button class="btn-sm btn-sm-red" data-del-beli="${esc(p.id)}">🗑</button>` : ''}
         </div>
       </td>
     `;
@@ -1061,15 +1079,28 @@ function renderPembelian(filter = {}) {
   });
 
   setEl('tfoot-pembelian-total', rupiah(totalSum));
-
-  // Sembunyikan kolom aksi untuk kasir jika bukan approval column
-  if (!approvePerms && !isReadOnly) {
-    // kasir hanya bisa lihat, tidak bisa approve/hapus
-    tbody.querySelectorAll('[data-del-beli]').forEach(btn => {
-      if (currentRole === 'kasir') btn.style.display = 'none';
-    });
-  }
 }
+
+// Pembelian yang sudah disetujui/ditolak hanya bisa diedit Admin
+function canEditBeli(p) {
+  return canModify(p) && (currentRole === 'developer' || (p.statusApproval || 'menunggu') === 'menunggu');
+}
+
+let editingBeliId = null;
+const BELI_FORM_IDS = ['beli-jenis', 'beli-qty', 'beli-harga', 'beli-total', 'beli-ket', 'beli-link'];
+
+function resetBeliForm() {
+  editingBeliId = null;
+  BELI_FORM_IDS.forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('beli-foto').value     = '';
+  document.getElementById('beli-supplier').value = '';
+  document.getElementById('beli-carabayar').value = 'hutang';
+  document.getElementById('beli-tgl').value      = today();
+  document.getElementById('beli-form-title').textContent = 'Tambah Pembelian';
+  document.getElementById('btn-simpan-beli').textContent = 'Simpan Pembelian';
+  document.getElementById('btn-batal-beli').style.display = 'none';
+}
+document.getElementById('btn-batal-beli').addEventListener('click', resetBeliForm);
 
 document.getElementById('btn-simpan-beli').addEventListener('click', async () => {
   const tgl   = document.getElementById('beli-tgl').value;
@@ -1096,36 +1127,68 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
       fotoNota = await getDownloadURL(ref);
     }
 
-    await addDoc(collection(db, 'lk_pembelian'), {
+    const data = {
       tgl, supplierId: supId, jenis, qty, harga, total,
-      fotoNota, linkNota: link || null,
+      linkNota: link || null,
       caraBayar: document.getElementById('beli-carabayar').value,
       ket: document.getElementById('beli-ket').value.trim(),
-      statusApproval: 'menunggu',
-      buktiTransfer: null,
-      ...inputByFields(),
-      createdAt: serverTimestamp(),
-    });
-    ['beli-jenis','beli-qty','beli-harga','beli-total','beli-ket','beli-link'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('beli-foto').value    = '';
-    document.getElementById('beli-supplier').value = '';
-    document.getElementById('beli-tgl').value     = today();
-    toast('Pembelian berhasil disimpan, menunggu approval pengurus');
+    };
+    if (editingBeliId) {
+      if (fotoNota) data.fotoNota = fotoNota;
+      await updateDoc(doc(db, 'lk_pembelian', editingBeliId), {
+        ...data, editedByNama: currentUserData?.nama || '', editedAt: serverTimestamp(),
+      });
+      toast('Pembelian diperbarui ✓');
+    } else {
+      await addDoc(collection(db, 'lk_pembelian'), {
+        ...data, fotoNota,
+        statusApproval: 'menunggu',
+        buktiTransfer: null,
+        ...inputByFields(),
+        createdAt: serverTimestamp(),
+      });
+      toast('Pembelian berhasil disimpan, menunggu approval pengurus');
+    }
+    resetBeliForm();
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = 'Simpan Pembelian';
+    btn.disabled = false;
+    btn.textContent = editingBeliId ? 'Update Pembelian' : 'Simpan Pembelian';
   }
 });
 
 document.getElementById('btn-filter-beli').addEventListener('click', () => {
-  renderPembelian({
+  renderPembelian(pembelianFilter = {
     bulan:      document.getElementById('filter-beli-bulan').value,
     supplierId: document.getElementById('filter-beli-supplier').value,
   });
 });
 
 document.getElementById('tbody-pembelian').addEventListener('click', async e => {
+  // Edit — isi ulang form di atas
+  const editId = e.target.dataset.editBeli;
+  if (editId) {
+    const p = pembelian.find(x => x.id === editId);
+    if (!p || !canEditBeli(p)) return;
+    editingBeliId = editId;
+    document.getElementById('beli-tgl').value       = p.tgl || today();
+    document.getElementById('beli-supplier').value  = p.supplierId || '';
+    document.getElementById('beli-jenis').value     = p.jenis || '';
+    document.getElementById('beli-total').value     = p.total ? formatRibuan(p.total) : '';
+    document.getElementById('beli-qty').value       = p.qty ? formatRibuan(p.qty) : '';
+    document.getElementById('beli-harga').value     = p.harga ? formatRibuan(p.harga) : '';
+    document.getElementById('beli-carabayar').value = p.caraBayar || 'hutang';
+    document.getElementById('beli-ket').value       = p.ket || '';
+    document.getElementById('beli-link').value      = p.linkNota || '';
+    document.getElementById('beli-foto').value      = '';
+    document.getElementById('beli-form-title').textContent = 'Edit Pembelian';
+    document.getElementById('btn-simpan-beli').textContent = 'Update Pembelian';
+    document.getElementById('btn-batal-beli').style.display = '';
+    document.getElementById('form-pembelian-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
   // Hapus
   const delId = e.target.dataset.delBeli;
   if (delId) {
@@ -1287,7 +1350,7 @@ function renderMutasi() {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-note">Belum ada riwayat transfer</td></tr>';
     return;
   }
-  const canDelete = currentRole === 'developer' || currentRole === 'pengurus';
+
   tbody.innerHTML = '';
   data.forEach(m => {
     const tr = document.createElement('tr');
@@ -1298,7 +1361,7 @@ function renderMutasi() {
       <td class="text-green"><strong>${rupiah(m.jumlah)}</strong></td>
       <td>${esc(m.ket || '–')}</td>
       <td>${inputByBadge(m)}</td>
-      <td>${canDelete ? `<button class="btn-sm btn-sm-red" data-del-mutasi="${esc(m.id)}">Hapus</button>` : ''}</td>
+      <td>${canRemove(m) ? `<button class="btn-sm btn-sm-red" data-del-mutasi="${esc(m.id)}">Hapus</button>` : ''}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -1333,7 +1396,7 @@ document.getElementById('kas-via').addEventListener('change', function () {
     this.value === 'transfer' ? '' : 'none';
 });
 
-function renderKasir(filter = {}) {
+function renderKasir(filter = kasirFilter) {
   const tbody = document.getElementById('tbody-kasir');
   if (!tbody) return;
   let data = [...kasirData];
@@ -1342,8 +1405,6 @@ function renderKasir(filter = {}) {
   data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   let masuk = 0, keluar = 0;
-  // Hapus transaksi hanya Admin & pengurus (sesuai rules Firestore)
-  const canDelete = currentRole === 'developer' || currentRole === 'pengurus';
 
   if (!data.length) {
     tbody.innerHTML = `<tr><td colspan="7" class="empty-note">Belum ada transaksi kas</td></tr>`;
@@ -1369,8 +1430,12 @@ function renderKasir(filter = {}) {
         <td>${!k.via || k.via === 'tunai' ? 'Tunai' : esc(rekeningName(k.rekeningId))}</td>
         <td>${esc(k.ket || '-')}</td>
         <td>${inputByBadge(k)}</td>
-        <td style="${canDelete ? '' : 'display:none'}">
-          <button class="btn-sm btn-sm-red" data-del-kas="${esc(k.id)}">Hapus</button>
+        <td>
+          <div style="display:flex;gap:4px">
+            ${canModify(k) && !isKasOtomatis(k) ? `<button class="btn-sm btn-sm-blue" data-edit-kas="${esc(k.id)}">✏️ Edit</button>` : ''}
+            ${canRemove(k) && !(k.sumberPiutangId && !k.sumberPiutangBayarId)
+              ? `<button class="btn-sm btn-sm-red" data-del-kas="${esc(k.id)}">Hapus</button>` : ''}
+          </div>
         </td>
       `;
       tbody.appendChild(tr);
@@ -1387,58 +1452,82 @@ function renderKasir(filter = {}) {
   }
 }
 
-document.getElementById('btn-simpan-kas').addEventListener('click', async () => {
-  const tgl       = document.getElementById('kas-tgl').value;
-  const jenis     = document.getElementById('kas-jenis').value;
-  const kategori  = document.getElementById('kas-kategori').value;
-  const jumlah    = parseRibuan(document.getElementById('kas-jumlah').value);
-  const supplierId  = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
-  const via         = document.getElementById('kas-via').value;
-  const rekeningId  = via === 'transfer' ? document.getElementById('kas-rekening').value : null;
-
-  const piuNama = kategori === 'piutang' ? document.getElementById('kas-piu-nama').value.trim() : '';
-
-  if (!tgl || !jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return; }
-  if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return; }
-  if (kategori === 'piutang' && !piuNama) { toast('Nama peminjam wajib diisi', 'error'); return; }
-  if (via === 'transfer' && !rekeningId) { toast('Pilih rekening untuk transfer', 'error'); return; }
-
-  try {
-    const ket = document.getElementById('kas-ket').value.trim();
-    await addDoc(collection(db, 'lk_kasir'), {
-      tgl, jenis, kategori, jumlah,
-      supplierId:  supplierId  || null,
-      via,
-      rekeningId:  rekeningId  || null,
-      ket,
+// Tambahkan satu transaksi kas ke batch. Kategori piutang sekaligus membuat
+// catatan piutang, dan entri kas ditautkan (sumberPiutangId) supaya ikut terhapus
+// bersama piutangnya.
+function tambahKasKeBatch(batch, d) {
+  const kasRef = doc(collection(db, 'lk_kasir'));
+  let piuRef = null;
+  if (d.kategori === 'piutang') {
+    piuRef = doc(collection(db, 'lk_piutang'));
+    batch.set(piuRef, {
+      nama: d.piuNama, jumlah: d.jumlah, tgl: d.tgl,
+      cicilan: d.cicilan, tglCicilan: d.tglCicilan,
+      ket: d.ket || `Dicatat dari kasir ${d.tgl}`,
+      status: 'aktif',
       ...inputByFields(),
       createdAt: serverTimestamp(),
     });
+  }
+  batch.set(kasRef, {
+    tgl: d.tgl, jenis: d.jenis, kategori: d.kategori, jumlah: d.jumlah,
+    supplierId: d.supplierId || null,
+    via:        d.via,
+    rekeningId: d.rekeningId || null,
+    ket:        d.ket,
+    sumberPiutangId: piuRef?.id || null,
+    ...inputByFields(),
+    createdAt: serverTimestamp(),
+  });
+}
 
-    // Jika kategori piutang, otomatis buat entri piutang
-    if (kategori === 'piutang') {
-      const cicilan   = parseRibuan(document.getElementById('kas-piu-cicilan').value) || 0;
-      const tglCicilan = document.getElementById('kas-piu-tgl-cicilan').value;
-      await addDoc(collection(db, 'lk_piutang'), {
-        nama: piuNama, jumlah, tgl,
-        cicilan, tglCicilan,
-        ket: ket || `Dicatat dari kasir ${tgl}`,
-        status: 'aktif',
-        ...inputByFields(),
-        createdAt: serverTimestamp(),
+// Transaksi otomatis (dari pembelian, pengajuan, piutang) tidak bisa diedit — hanya dihapus
+const isKasOtomatis = k => !!(k.autoFromBeli || k.sumberPengajuanId || k.sumberPiutangId || k.kategori === 'piutang');
+
+let editingKasId = null;
+
+function resetKasForm() {
+  editingKasId = null;
+  ['kas-jumlah', 'kas-ket', 'kas-piu-nama', 'kas-piu-cicilan', 'kas-piu-tgl-cicilan']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('kas-supplier').value  = '';
+  document.getElementById('kas-rekening').value  = '';
+  document.getElementById('kas-supplier-wrap').style.display  = 'none';
+  document.getElementById('kas-rekening-wrap').style.display  = 'none';
+  document.getElementById('kas-piutang-wrap').style.display   = 'none';
+  document.getElementById('kas-via').value       = 'tunai';
+  document.getElementById('kas-tgl').value       = today();
+  document.getElementById('kas-form-title').textContent = 'Tambah Transaksi';
+  document.getElementById('btn-simpan-kas').textContent = 'Simpan Langsung';
+  document.getElementById('btn-antri-kas').style.display = '';
+  document.getElementById('btn-batal-kas').style.display = 'none';
+}
+document.getElementById('btn-batal-kas').addEventListener('click', resetKasForm);
+
+document.getElementById('btn-simpan-kas').addEventListener('click', async () => {
+  const d = getKasirFormData();
+  if (!validateKasirData(d)) return;
+
+  try {
+    if (editingKasId) {
+      if (d.kategori === 'piutang') { toast('Transaksi piutang dicatat dari halaman Piutang, tidak lewat edit', 'error'); return; }
+      await updateDoc(doc(db, 'lk_kasir', editingKasId), {
+        tgl: d.tgl, jenis: d.jenis, kategori: d.kategori, jumlah: d.jumlah,
+        supplierId: d.supplierId || null,
+        via:        d.via,
+        rekeningId: d.rekeningId || null,
+        ket:        d.ket,
+        editedByNama: currentUserData?.nama || '',
+        editedAt:     serverTimestamp(),
       });
+      toast('Transaksi diperbarui ✓');
+    } else {
+      const batch = writeBatch(db);
+      tambahKasKeBatch(batch, d);
+      await batch.commit();
+      toast(d.kategori === 'piutang' ? 'Transaksi & piutang berhasil disimpan ✓' : 'Transaksi berhasil disimpan');
     }
-
-    ['kas-tgl', 'kas-jumlah', 'kas-ket', 'kas-piu-nama', 'kas-piu-cicilan', 'kas-piu-tgl-cicilan']
-      .forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('kas-supplier').value  = '';
-    document.getElementById('kas-rekening').value  = '';
-    document.getElementById('kas-supplier-wrap').style.display  = 'none';
-    document.getElementById('kas-rekening-wrap').style.display  = 'none';
-    document.getElementById('kas-piutang-wrap').style.display   = 'none';
-    document.getElementById('kas-via').value       = 'tunai';
-    document.getElementById('kas-tgl').value       = today();
-    toast(kategori === 'piutang' ? 'Transaksi & piutang berhasil disimpan ✓' : 'Transaksi berhasil disimpan');
+    resetKasForm();
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, 'error');
   }
@@ -1532,21 +1621,10 @@ document.getElementById('btn-simpan-semua-kas').addEventListener('click', async 
   btn.disabled = true;
   btn.textContent = 'Menyimpan…';
   try {
-    for (const d of kasirAntrian) {
-      await addDoc(collection(db, 'lk_kasir'), {
-        tgl: d.tgl, jenis: d.jenis, kategori: d.kategori, jumlah: d.jumlah,
-        supplierId: d.supplierId || null, via: d.via, rekeningId: d.rekeningId || null, ket: d.ket,
-        ...inputByFields(), createdAt: serverTimestamp(),
-      });
-      if (d.kategori === 'piutang' && d.piuNama) {
-        await addDoc(collection(db, 'lk_piutang'), {
-          nama: d.piuNama, jumlah: d.jumlah, tgl: d.tgl,
-          cicilan: d.cicilan, tglCicilan: d.tglCicilan,
-          ket: d.ket || `Dicatat dari kasir ${d.tgl}`,
-          status: 'aktif', ...inputByFields(), createdAt: serverTimestamp(),
-        });
-      }
-    }
+    // Satu batch: semua tersimpan atau tidak sama sekali (tidak setengah jalan)
+    const batch = writeBatch(db);
+    kasirAntrian.forEach(d => tambahKasKeBatch(batch, d));
+    await batch.commit();
     const n = kasirAntrian.length;
     kasirAntrian = [];
     renderKasirAntrian();
@@ -1560,13 +1638,38 @@ document.getElementById('btn-simpan-semua-kas').addEventListener('click', async 
 });
 
 document.getElementById('btn-filter-kas').addEventListener('click', () => {
-  renderKasir({
+  renderKasir(kasirFilter = {
     bulan: document.getElementById('filter-kas-bulan').value,
     jenis: document.getElementById('filter-kas-jenis').value,
   });
 });
 
 document.getElementById('tbody-kasir').addEventListener('click', e => {
+  const editId = e.target.dataset.editKas;
+  if (editId) {
+    const k = kasirData.find(x => x.id === editId);
+    if (!k || !canModify(k) || isKasOtomatis(k)) return;
+    editingKasId = editId;
+    document.getElementById('kas-tgl').value   = k.tgl || today();
+    document.getElementById('kas-jenis').value = k.jenis || 'pemasukan';
+    populateKategoriSelect();
+    document.getElementById('kas-kategori').value = k.kategori || '';
+    document.getElementById('kas-supplier-wrap').style.display = k.kategori === 'bayar-supplier' ? '' : 'none';
+    document.getElementById('kas-piutang-wrap').style.display  = 'none';
+    document.getElementById('kas-supplier').value = k.supplierId || '';
+    document.getElementById('kas-jumlah').value   = formatRibuan(k.jumlah);
+    document.getElementById('kas-via').value      = k.via === 'transfer' ? 'transfer' : 'tunai';
+    document.getElementById('kas-rekening-wrap').style.display = k.via === 'transfer' ? '' : 'none';
+    document.getElementById('kas-rekening').value = k.rekeningId || '';
+    document.getElementById('kas-ket').value      = k.ket || '';
+    document.getElementById('kas-form-title').textContent = 'Edit Transaksi';
+    document.getElementById('btn-simpan-kas').textContent = 'Update Transaksi';
+    document.getElementById('btn-antri-kas').style.display = 'none';
+    document.getElementById('btn-batal-kas').style.display = '';
+    document.getElementById('form-kasir-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
   const id = e.target.dataset.delKas;
   if (!id) return;
   const k = kasirData.find(x => x.id === id);
@@ -2277,6 +2380,8 @@ function togglePgjSupplierWrap() {
   const sel = document.getElementById('pgj-kategori');
   const wrap = document.getElementById('pgj-supplier-wrap');
   if (sel && wrap) wrap.style.display = sel.value === 'bayar-supplier' ? '' : 'none';
+  const piuWrap = document.getElementById('pgj-piutang-wrap');
+  if (sel && piuWrap) piuWrap.style.display = sel.value === 'piutang' ? '' : 'none';
 }
 
 document.getElementById('pgj-kategori')?.addEventListener('change', togglePgjSupplierWrap);
@@ -2295,8 +2400,10 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
   const via         = document.getElementById('pgj-via').value;
   const rekeningId  = via === 'transfer' ? document.getElementById('pgj-rekening').value : null;
   const ket         = document.getElementById('pgj-ket').value.trim();
+  const piuNama     = kategori === 'piutang' ? document.getElementById('pgj-piu-nama').value.trim() : '';
 
   if (!tgl || !kategori || !jumlah) { toast('Tanggal, kategori, dan jumlah wajib', 'error'); return; }
+  if (kategori === 'piutang' && !piuNama) { toast('Nama peminjam wajib diisi', 'error'); return; }
   if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier', 'error'); return; }
   if (via === 'transfer' && !rekeningId) { toast('Pilih rekening', 'error'); return; }
 
@@ -2307,14 +2414,16 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
       via,
       rekeningId:  rekeningId  || null,
       ket,
+      piuNama:     piuNama || null,
       status: 'pending',
+      ...inputByFields(),
       pengajuId:   currentUser.uid,
       pengajuNama: currentUserData?.nama || '',
       pengajuRole: currentRole || '',
       createdAt:   serverTimestamp(),
     });
     // Clear form
-    ['pgj-jumlah', 'pgj-ket'].forEach(id => { document.getElementById(id).value = ''; });
+    ['pgj-jumlah', 'pgj-ket', 'pgj-piu-nama'].forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('pgj-supplier').value = '';
     document.getElementById('pgj-rekening').value = '';
     document.getElementById('pgj-via').value = 'tunai';
@@ -2343,7 +2452,7 @@ function renderPengajuanPending() {
     const katLabel = getKategoriLabel(p.kategori);
     const isNonBisnis = isKategoriNonBisnis(p.kategori);
     const viaLabel = p.via === 'transfer' ? rekeningName(p.rekeningId) : 'Tunai';
-    const supLabel = p.supplierId ? supplierName(p.supplierId) : '–';
+    const supLabel = p.supplierId ? supplierName(p.supplierId) : p.piuNama ? `Peminjam: ${p.piuNama}` : '–';
     const tr = document.createElement('tr');
     if (isNonBisnis) tr.classList.add('row-non-bisnis');
     tr.innerHTML = `
@@ -2413,6 +2522,8 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
         // Transaksi: cegah konfirmasi dobel kalau dua orang menekan bersamaan
         const pgjRef   = doc(db, 'lk_pengajuan_kas', p.id);
         const kasirRef = doc(collection(db, 'lk_kasir'));
+        // Pengajuan kategori piutang → buat catatan piutang juga, ditautkan ke entri kas
+        const piuRef   = p.kategori === 'piutang' ? doc(collection(db, 'lk_piutang')) : null;
         await runTransaction(db, async tx => {
           const cur = await tx.get(pgjRef);
           if (cur.data()?.status !== 'pending') throw new Error('Pengajuan ini sudah diproses');
@@ -2431,8 +2542,19 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
           inputByRole: currentRole || '',
           sumberPengajuanId: p.id,
           sumberPengajuanOleh: p.pengajuNama || '',
+          sumberPiutangId: piuRef?.id || null,
           createdAt: serverTimestamp(),
           });
+          if (piuRef) {
+            tx.set(piuRef, {
+              nama: p.piuNama || '(tanpa nama)', jumlah: p.jumlah, tgl: p.tgl,
+              cicilan: 0, tglCicilan: '',
+              ket: p.ket || `Dari pengajuan ${p.pengajuNama || ''}`,
+              status: 'aktif',
+              ...inputByFields(),
+              createdAt: serverTimestamp(),
+            });
+          }
           // 2. Update pengajuan jadi done
           tx.update(pgjRef, {
             status: 'done',
@@ -2671,7 +2793,7 @@ document.getElementById('btn-simpan-po').addEventListener('click', async () => {
   }
 });
 
-function renderPO(filter = {}) {
+function renderPO(filter = poFilter) {
   const tbody = document.getElementById('tbody-po');
   if (!tbody) return;
   let data = [...poData];
@@ -2702,7 +2824,7 @@ function renderPO(filter = {}) {
         aksi += `<button class="btn-sm btn-sm-green" data-po-selesai="${esc(po.id)}" style="margin:1px">Selesai</button>`;
         aksi += `<button class="btn-sm btn-sm-red"   data-po-status="${esc(po.id)}" data-new-status="dibatalkan" style="margin:1px">Batal</button>`;
       }
-      if (po.status === 'pending' || po.status === 'dikirim') {
+      if ((po.status === 'pending' || po.status === 'dikirim') && canRemove(po)) {
         aksi += `<button class="btn-sm btn-sm-red" data-del-po="${esc(po.id)}" style="margin:1px">Hapus</button>`;
       }
     }
@@ -2776,7 +2898,7 @@ document.getElementById('tbody-po').addEventListener('click', async e => {
 });
 
 document.getElementById('btn-filter-po').addEventListener('click', () => {
-  renderPO({
+  renderPO(poFilter = {
     status:     document.getElementById('filter-po-status').value,
     bulan:      document.getElementById('filter-po-bulan').value,
     supplierId: document.getElementById('filter-po-supplier').value,
@@ -2822,7 +2944,7 @@ function renderAnggaran() {
               <option value="selesai"    >Selesai</option>
               <option value="dibatalkan" >Batalkan</option>
             </select>` : ''}
-          <button class="btn-sm btn-sm-red" data-del-ang="${esc(a.id)}">Hapus</button>
+          ${canRemove(a) ? `<button class="btn-sm btn-sm-red" data-del-ang="${esc(a.id)}">Hapus</button>` : ''}
         </div>
       </td>
     `;
@@ -2897,6 +3019,13 @@ function nextCicilanDate(tglMulai, cicilanPerBulan, dibayar, total) {
   return next.toISOString().slice(0, 10);
 }
 
+// Hapus piutang ikut menghapus cicilan & entri kasnya — semuanya harus boleh dihapus
+function canRemovePiutang(p) {
+  return canRemove(p)
+    && piutangBayar.filter(b => b.piutangId === p.id).every(canRemove)
+    && kasirData.filter(k => k.sumberPiutangId === p.id).every(canRemove);
+}
+
 function renderPiutang() {
   const tbody = document.getElementById('tbody-piutang');
   if (!tbody) return;
@@ -2940,7 +3069,7 @@ function renderPiutang() {
           <button class="btn-sm btn-sm-gray" data-riwayat-piu="${esc(p.id)}">📋 Riwayat</button>
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${esc(p.id)}" data-nama="${esc(p.nama)}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-orange" data-ambil-lagi="${esc(p.id)}" data-nama="${esc(p.nama)}">💸 Ambil Lagi</button>` : ''}
-          ${!isReadOnly ? `<button class="btn-sm btn-sm-red" data-del-piutang="${esc(p.id)}">Hapus</button>` : ''}
+          ${canRemovePiutang(p) ? `<button class="btn-sm btn-sm-red" data-del-piutang="${esc(p.id)}">Hapus</button>` : ''}
         </div>
       </td>
     `;
@@ -2982,18 +3111,37 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   const jumlah = parseRibuan(document.getElementById('piu-jumlah').value) || 0;
   const tgl    = document.getElementById('piu-tgl').value;
   if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
+  const sumber = document.getElementById('piu-sumber').value;
+  const ket    = document.getElementById('piu-ket').value.trim();
   try {
-    await addDoc(collection(db, 'lk_piutang'), {
+    // Uang yang dipinjamkan keluar dari kas (kecuali "tidak dicatat ke kas")
+    const batch  = writeBatch(db);
+    const piuRef = doc(collection(db, 'lk_piutang'));
+    batch.set(piuRef, {
       nama, jumlah, tgl,
       cicilan:    parseRibuan(document.getElementById('piu-cicilan').value) || 0,
       tglCicilan: document.getElementById('piu-tgl-cicilan').value,
-      ket:        document.getElementById('piu-ket').value.trim(),
+      ket,
       status:     'aktif',
       ...inputByFields(),
       createdAt:  serverTimestamp(),
     });
+    if (sumber !== 'none') {
+      batch.set(doc(collection(db, 'lk_kasir')), {
+        tgl, jumlah,
+        jenis: 'pengeluaran', kategori: 'piutang', supplierId: null,
+        via:        sumber === 'tunai' ? 'tunai' : 'transfer',
+        rekeningId: sumber === 'tunai' ? null : sumber,
+        ket:        `Auto — pinjaman ke ${nama}${ket ? ` (${ket})` : ''}`,
+        sumberPiutangId: piuRef.id,
+        ...inputByFields(),
+        createdAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
     ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('piu-tgl').value = today();
+    document.getElementById('piu-tgl').value    = today();
+    document.getElementById('piu-sumber').value = 'tunai';
     toast('Piutang berhasil disimpan ✓');
   } catch (e) { toast('Gagal: ' + e.message, 'error'); }
 });
@@ -3073,12 +3221,12 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
   const p = piutangData.find(x => x.id === delId);
   confirmDelete(`Hapus piutang <strong>${esc(p?.nama || '')}</strong>? Riwayat bayar beserta entri kas cicilannya ikut terhapus.`, async () => {
     try {
-      await deleteDoc(doc(db, 'lk_piutang', delId));
-      // hapus semua bayar terkait + entri kas yang dibuat otomatis dari cicilan/ambil lagi
-      await Promise.all([
-        ...piutangBayar.filter(b => b.piutangId === delId).map(b => deleteDoc(doc(db, 'lk_piutang_bayar', b.id))),
-        ...kasirData.filter(k => k.sumberPiutangId === delId).map(k => deleteDoc(doc(db, 'lk_kasir', k.id))),
-      ]);
+      // Satu batch: piutang + semua cicilan + entri kas terkait terhapus bersamaan
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'lk_piutang', delId));
+      piutangBayar.filter(b => b.piutangId === delId).forEach(b => batch.delete(doc(db, 'lk_piutang_bayar', b.id)));
+      kasirData.filter(k => k.sumberPiutangId === delId).forEach(k => batch.delete(doc(db, 'lk_kasir', k.id)));
+      await batch.commit();
       toast('Piutang dihapus');
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
   });

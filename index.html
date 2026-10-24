@@ -168,7 +168,7 @@
       <section id="page-pembelian" class="page">
         <h2 class="page-title">Pembelian Barang</h2>
         <div class="form-card action-form" id="form-pembelian-wrap">
-          <h3>Tambah Pembelian</h3>
+          <h3 id="beli-form-title">Tambah Pembelian</h3>
           <div class="form-grid">
             <div class="form-group">
               <label>Tanggal</label>
@@ -218,6 +218,7 @@
             </div>
           </div>
           <button class="btn-primary" id="btn-simpan-beli">Simpan Pembelian</button>
+          <button class="btn-outline" id="btn-batal-beli" style="display:none;margin-left:8px">Batal Edit</button>
         </div>
 
         <h3 class="section-title">Riwayat Pembelian</h3>
@@ -265,7 +266,7 @@
       <section id="page-kasir" class="page">
         <h2 class="page-title">Pemasukan &amp; Pengeluaran (Kasir)</h2>
         <div class="form-card action-form" id="form-kasir-wrap">
-          <h3>Tambah Transaksi</h3>
+          <h3 id="kas-form-title">Tambah Transaksi</h3>
           <div class="form-grid">
             <div class="form-group">
               <label>Tanggal</label>
@@ -329,6 +330,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button class="btn-primary" id="btn-simpan-kas">Simpan Langsung</button>
             <button class="btn-outline" id="btn-antri-kas">+ Tambah ke Daftar</button>
+            <button class="btn-outline" id="btn-batal-kas" style="display:none">Batal Edit</button>
           </div>
         </div>
 
@@ -418,6 +420,10 @@
             <div class="form-group">
               <label>Kategori</label>
               <select id="pgj-kategori"></select>
+            </div>
+            <div class="form-group" id="pgj-piutang-wrap" style="display:none">
+              <label>Nama Peminjam <span style="color:#ef4444">*</span></label>
+              <input type="text" id="pgj-piu-nama" placeholder="cth: Pak Budi" />
             </div>
             <div class="form-group" id="pgj-supplier-wrap" style="display:none">
               <label>Supplier (jika bayar hutang)</label>
@@ -758,6 +764,10 @@
             <div class="form-group">
               <label>Mulai Cicilan</label>
               <input type="date" id="piu-tgl-cicilan" />
+            </div>
+            <div class="form-group">
+              <label>Uang diambil dari</label>
+              <select id="piu-sumber"></select>
             </div>
             <div class="form-group">
               <label>Keterangan</label>
