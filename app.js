@@ -3308,7 +3308,7 @@ document.getElementById('panel-catat-bayar').insertAdjacentHTML('afterend', `
       </div>
       <div class="form-group">
         <label>Jumlah Diambil (Rp)</label>
-        <input type="text" inputmode="numeric" id="ambil-jumlah" placeholder="0" />
+        <input type="text" inputmode="numeric" autocomplete="off" id="ambil-jumlah" placeholder="0" />
       </div>
       <div class="form-group">
         <label>Diambil dari</label>
