@@ -1096,11 +1096,11 @@ function resetBeliForm() {
   document.getElementById('beli-supplier').value = '';
   document.getElementById('beli-carabayar').value = 'hutang';
   document.getElementById('beli-tgl').value      = today();
-  document.getElementById('beli-form-title').textContent = 'Tambah Pembelian';
+  setEl('beli-form-title', 'Tambah Pembelian');
   document.getElementById('btn-simpan-beli').textContent = 'Simpan Pembelian';
-  document.getElementById('btn-batal-beli').style.display = 'none';
+  document.getElementById('btn-batal-beli')?.style.setProperty('display', 'none');
 }
-document.getElementById('btn-batal-beli').addEventListener('click', resetBeliForm);
+document.getElementById('btn-batal-beli')?.addEventListener('click', resetBeliForm);
 
 document.getElementById('btn-simpan-beli').addEventListener('click', async () => {
   const tgl   = document.getElementById('beli-tgl').value;
@@ -1182,9 +1182,9 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
     document.getElementById('beli-ket').value       = p.ket || '';
     document.getElementById('beli-link').value      = p.linkNota || '';
     document.getElementById('beli-foto').value      = '';
-    document.getElementById('beli-form-title').textContent = 'Edit Pembelian';
+    setEl('beli-form-title', 'Edit Pembelian');
     document.getElementById('btn-simpan-beli').textContent = 'Update Pembelian';
-    document.getElementById('btn-batal-beli').style.display = '';
+    document.getElementById('btn-batal-beli')?.style.setProperty('display', '');
     document.getElementById('form-pembelian-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
@@ -1497,12 +1497,12 @@ function resetKasForm() {
   document.getElementById('kas-piutang-wrap').style.display   = 'none';
   document.getElementById('kas-via').value       = 'tunai';
   document.getElementById('kas-tgl').value       = today();
-  document.getElementById('kas-form-title').textContent = 'Tambah Transaksi';
+  setEl('kas-form-title', 'Tambah Transaksi');
   document.getElementById('btn-simpan-kas').textContent = 'Simpan Langsung';
   document.getElementById('btn-antri-kas').style.display = '';
-  document.getElementById('btn-batal-kas').style.display = 'none';
+  document.getElementById('btn-batal-kas')?.style.setProperty('display', 'none');
 }
-document.getElementById('btn-batal-kas').addEventListener('click', resetKasForm);
+document.getElementById('btn-batal-kas')?.addEventListener('click', resetKasForm);
 
 document.getElementById('btn-simpan-kas').addEventListener('click', async () => {
   const d = getKasirFormData();
@@ -1662,10 +1662,10 @@ document.getElementById('tbody-kasir').addEventListener('click', e => {
     document.getElementById('kas-rekening-wrap').style.display = k.via === 'transfer' ? '' : 'none';
     document.getElementById('kas-rekening').value = k.rekeningId || '';
     document.getElementById('kas-ket').value      = k.ket || '';
-    document.getElementById('kas-form-title').textContent = 'Edit Transaksi';
+    setEl('kas-form-title', 'Edit Transaksi');
     document.getElementById('btn-simpan-kas').textContent = 'Update Transaksi';
     document.getElementById('btn-antri-kas').style.display = 'none';
-    document.getElementById('btn-batal-kas').style.display = '';
+    document.getElementById('btn-batal-kas')?.style.setProperty('display', '');
     document.getElementById('form-kasir-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
