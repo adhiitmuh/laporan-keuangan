@@ -246,6 +246,25 @@ const ROLE_PAGES = {
 // (Entri kas otomatis dari bayar pembelian & piutang tetap dibuat dari halaman masing-masing.)
 const isKasirLihatSaja = () => currentRole === 'pengurus';
 
+// Alur pengajuan pengeluaran: pengaju → cek Owner → approval (user bertanda approver) → masuk kas.
+// Status: 'cek' → 'approval' → 'done' | 'rejected'. 'pending' = pengajuan alur lama (dikonfirmasi Kasir).
+const isApproverPengajuan = () => currentUserData?.apps?.laporan_keuangan?.approver === true;
+const PGJ_DALAM_PROSES = ['cek', 'approval', 'pending'];
+
+// Aksi yang boleh dilakukan user saat ini pada satu pengajuan
+function aksiPengajuan(p) {
+  const milikSaya = p.pengajuId && p.pengajuId === currentUser?.uid;
+  return {
+    cek:        p.status === 'cek' && currentRole === 'developer',
+    setujui:    p.status === 'approval' && isApproverPengajuan() && !milikSaya,
+    konfirmasi: p.status === 'pending' && ['developer', 'kasir'].includes(currentRole),
+    tolak:      (p.status === 'cek' && currentRole === 'developer')
+             || (p.status === 'approval' && isApproverPengajuan() && !milikSaya)
+             || (p.status === 'pending' && ['developer', 'kasir'].includes(currentRole)),
+    batal:      milikSaya && (p.status === 'cek' || p.status === 'approval'),
+  };
+}
+
 function applyRoleUI(role) {
   // Nav buttons
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -272,11 +291,6 @@ function applyRoleUI(role) {
   const formPgj = document.getElementById('form-pengajuan-wrap');
   if (formPgj) formPgj.style.display = canAjukan ? '' : 'none';
 
-  // Tombol konfirmasi pengajuan — hanya admin & kasir
-  const canKonfirmasi = role === 'developer' || role === 'kasir';
-  document.querySelectorAll('.col-pengajuan-aksi').forEach(el => {
-    el.style.display = canKonfirmasi ? '' : 'none';
-  });
 
   // Saldo awal hanya admin & pengurus
   // Pengurus tidak punya halaman Admin — tombol backup ditaruh di Laporan
@@ -2281,7 +2295,11 @@ function renderUsers() {
         ? '<span class="role-badge role-developer">owner</span>'
         : `<select data-lk-role="${esc(u.id)}" ${akses ? '' : 'disabled'}>
             ${LK_ROLES.map(r => `<option value="${r}" ${(lk.role || 'kasir') === r ? 'selected' : ''}>${r}</option>`).join('')}
-          </select>`}</td>
+          </select>`}
+        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;cursor:pointer">
+          <input type="checkbox" data-lk-approver="${esc(u.id)}" ${lk.approver ? 'checked' : ''} ${akses ? '' : 'disabled'}>
+          Approver pengajuan
+        </label></td>
       <td>${isOwner
         ? '<em style="color:var(--text-muted);font-size:12px">Selalu punya akses</em>'
         : `<button class="btn-sm ${akses ? 'btn-sm-orange' : 'btn-sm-blue'}" data-lk-akses="${esc(u.id)}" data-akses="${akses}">
@@ -2293,6 +2311,18 @@ function renderUsers() {
 }
 
 document.getElementById('tbody-users').addEventListener('change', async e => {
+  const approverId = e.target.dataset.lkApprover;
+  if (approverId && currentUserData?.isOwner) {
+    const u = harmoniUsers.find(x => x.id === approverId);
+    try {
+      await updateDoc(doc(authDb, 'users', approverId), { 'apps.laporan_keuangan.approver': e.target.checked });
+      toast(`${u?.nama || ''} ${e.target.checked ? 'kini approver' : 'bukan lagi approver'} pengajuan`);
+    } catch (err) {
+      toast('Gagal memperbarui: ' + err.message, 'error');
+      renderUsers();
+    }
+    return;
+  }
   const id = e.target.dataset.lkRole;
   if (!id || !currentUserData?.isOwner) return;
   const u = harmoniUsers.find(x => x.id === id);
@@ -2630,6 +2660,8 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
   if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier', 'error'); return; }
   if (via === 'transfer' && !rekeningId) { toast('Pilih rekening', 'error'); return; }
 
+  // Owner adalah checker — pengajuan Owner langsung ke tahap approval
+  const olehOwner = currentRole === 'developer';
   try {
     await addDoc(collection(db, 'lk_pengajuan_kas'), {
       tgl, kategori, jumlah,
@@ -2638,7 +2670,8 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
       rekeningId:  rekeningId  || null,
       ket,
       piuNama:     piuNama || null,
-      status: 'pending',
+      status: olehOwner ? 'approval' : 'cek',
+      ...(olehOwner ? { cekId: currentUser.uid, cekNama: currentUserData?.nama || '', cekAt: serverTimestamp() } : {}),
       ...inputByFields(),
       pengajuId:   currentUser.uid,
       pengajuNama: currentUserData?.nama || '',
@@ -2653,21 +2686,26 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
     document.getElementById('pgj-supplier-wrap').style.display = 'none';
     document.getElementById('pgj-rekening-wrap').style.display = 'none';
     document.getElementById('pgj-tgl').value = today();
-    toast('Pengajuan terkirim, menunggu konfirmasi Kasir');
+    toast(olehOwner ? 'Pengajuan terkirim, menunggu approval' : 'Pengajuan terkirim ke Checker');
   } catch (e) {
     toast('Gagal: ' + e.message, 'error');
   }
 });
 
-// Render: pengajuan pending (untuk Kasir/Admin konfirmasi)
+// Render: pengajuan yang masih berjalan (cek Owner / approval / alur lama Kasir)
+const PGJ_TAHAP_LABEL = {
+  cek:      '<span class="badge badge-po-pending">Di Checker</span>',
+  approval: '<span class="badge badge-transfer">Di Approval</span>',
+  pending:  '<span class="badge badge-tunai">Menunggu Kasir</span>',
+};
+
 function renderPengajuanPending() {
   const tbody = document.getElementById('tbody-pengajuan-pending');
   if (!tbody) return;
-  const list = pengajuanData.filter(p => p.status === 'pending');
-  const canKonfirmasi = currentRole === 'developer' || currentRole === 'kasir';
+  const list = pengajuanData.filter(p => PGJ_DALAM_PROSES.includes(p.status));
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-note">Tidak ada pengajuan menunggu konfirmasi</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-note">Tidak ada pengajuan yang sedang diproses</td></tr>`;
     return;
   }
   tbody.innerHTML = '';
@@ -2676,6 +2714,15 @@ function renderPengajuanPending() {
     const isNonBisnis = isKategoriNonBisnis(p.kategori);
     const viaLabel = p.via === 'transfer' ? rekeningName(p.rekeningId) : 'Tunai';
     const supLabel = p.supplierId ? supplierName(p.supplierId) : p.piuNama ? `Peminjam: ${p.piuNama}` : '–';
+    const a = aksiPengajuan(p);
+    const tombol = [
+      a.cek        ? `<button class="btn-sm btn-sm-green" data-cek-pgj="${esc(p.id)}">✓ Teruskan ke Approval</button>` : '',
+      a.setujui    ? `<button class="btn-sm btn-sm-green" data-setujui-pgj="${esc(p.id)}">✓ Setujui</button>` : '',
+      a.konfirmasi ? `<button class="btn-sm btn-sm-green" data-konfirmasi-pgj="${esc(p.id)}">✓ Konfirmasi</button>` : '',
+      a.tolak      ? `<button class="btn-sm btn-sm-red" data-tolak-pgj="${esc(p.id)}">Tolak</button>` : '',
+      a.batal      ? `<button class="btn-sm btn-sm-gray" data-batal-pgj="${esc(p.id)}">Batalkan</button>` : '',
+    ].join(' ');
+    const dicek = p.cekNama ? `<br><span style="font-size:10px;color:#9ca3af">dicek ${esc(p.cekNama)}</span>` : '';
     const tr = document.createElement('tr');
     if (isNonBisnis) tr.classList.add('row-non-bisnis');
     tr.innerHTML = `
@@ -2686,10 +2733,8 @@ function renderPengajuanPending() {
       <td>${esc(viaLabel)}</td>
       <td>${esc(p.ket || '–')}</td>
       <td><span style="font-size:12px;font-weight:600">${esc(p.pengajuNama || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(p.pengajuRole || '')}</span></td>
-      <td class="col-pengajuan-aksi" style="${canKonfirmasi ? '' : 'display:none'}">
-        <button class="btn-sm btn-sm-green" data-konfirmasi-pgj="${esc(p.id)}">✓ Konfirmasi</button>
-        <button class="btn-sm btn-sm-red" data-tolak-pgj="${esc(p.id)}">Tolak</button>
-      </td>
+      <td>${PGJ_TAHAP_LABEL[p.status] || ''}${dicek}</td>
+      <td class="col-pengajuan-aksi"><div style="display:flex;gap:4px;flex-wrap:wrap">${tombol || '<span class="text-muted-sm">–</span>'}</div></td>
     `;
     tbody.appendChild(tr);
   });
@@ -2707,13 +2752,15 @@ function renderPengajuanRiwayat() {
   pengajuanData.forEach(p => {
     const katLabel = getKategoriLabel(p.kategori);
     const viaLabel = p.via === 'transfer' ? rekeningName(p.rekeningId) : 'Tunai';
-    let statusBadge = '';
-    if (p.status === 'pending')  statusBadge = '<span class="badge badge-po-pending">Pending</span>';
-    if (p.status === 'done')     statusBadge = '<span class="badge badge-lunas">✓ Disetujui</span>';
+    let statusBadge = PGJ_TAHAP_LABEL[p.status] || '';
+    if (p.status === 'done')     statusBadge = '<span class="badge badge-lunas">✓ Disetujui & masuk kas</span>';
     if (p.status === 'rejected') statusBadge = `<span class="badge badge-hutang">Ditolak</span>${p.rejectReason ? `<br><small style="color:#9ca3af">${esc(p.rejectReason)}</small>` : ''}`;
-    const konfirm = p.konfirmasiNama
-      ? `<span style="font-size:12px">${esc(p.konfirmasiNama)}</span>`
-      : '<span class="text-muted-sm">–</span>';
+    const jejak = [
+      p.cekNama      ? `Cek: ${esc(p.cekNama)}` : '',
+      p.approvalNama ? `Setuju: ${esc(p.approvalNama)}` : '',
+      p.konfirmasiNama && !p.ditolakNama ? `Kasir: ${esc(p.konfirmasiNama)}` : '',
+      p.ditolakNama  ? `Ditolak: ${esc(p.ditolakNama)}` : '',
+    ].filter(Boolean).join('<br>');
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${esc(p.tgl)}</td>
@@ -2722,109 +2769,125 @@ function renderPengajuanRiwayat() {
       <td>${esc(viaLabel)}</td>
       <td><span style="font-size:12px">${esc(p.pengajuNama || '–')}</span></td>
       <td>${statusBadge}</td>
-      <td>${konfirm}</td>
+      <td><span style="font-size:12px">${jejak || '<span class="text-muted-sm">–</span>'}</span></td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-// Handler konfirmasi / tolak
-document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', async e => {
-  const konfId = e.target.dataset.konfirmasiPgj;
-  const tolakId = e.target.dataset.tolakPgj;
-  if (!konfId && !tolakId) return;
-  if (!['developer', 'kasir'].includes(currentRole)) { toast('Hanya Kasir/Admin yang bisa konfirmasi', 'error'); return; }
+// Catat pengajuan sebagai pengeluaran kas (+ piutang bila kategori piutang) dan tandai selesai.
+// Dipakai untuk approval (status 'approval') dan konfirmasi Kasir alur lama (status 'pending').
+async function catatPengajuanKeKas(p, statusAwal, tandaSelesai) {
+  const pgjRef   = doc(db, 'lk_pengajuan_kas', p.id);
+  const kasirRef = doc(collection(db, 'lk_kasir'));
+  const piuRef   = p.kategori === 'piutang' ? doc(collection(db, 'lk_piutang')) : null;
+  await runTransaction(db, async tx => {
+    // Cegah diproses dobel kalau dua orang menekan bersamaan
+    const cur = await tx.get(pgjRef);
+    if (cur.data()?.status !== statusAwal) throw new Error('Pengajuan ini sudah diproses');
+    tx.set(kasirRef, {
+      tgl: p.tgl,
+      jenis: 'pengeluaran',
+      kategori: p.kategori,
+      jumlah: p.jumlah,
+      supplierId: p.supplierId || null,
+      via: p.via,
+      rekeningId: p.rekeningId || null,
+      ket: p.ket || '',
+      ...inputByFields(),
+      sumberPengajuanId: p.id,
+      sumberPengajuanOleh: p.pengajuNama || '',
+      sumberPiutangId: piuRef?.id || null,
+      createdAt: serverTimestamp(),
+    });
+    if (piuRef) {
+      tx.set(piuRef, {
+        nama: p.piuNama || '(tanpa nama)', jumlah: p.jumlah, tgl: p.tgl,
+        cicilan: 0, tglCicilan: '',
+        ket: p.ket || `Dari pengajuan ${p.pengajuNama || ''}`,
+        status: 'aktif',
+        ...inputByFields(),
+        createdAt: serverTimestamp(),
+      });
+    }
+    tx.update(pgjRef, { status: 'done', kasirDocId: kasirRef.id, doneAt: serverTimestamp(), ...tandaSelesai });
+  });
+}
 
-  const id = konfId || tolakId;
+// Handler aksi pengajuan
+document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', async e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const { cekPgj, setujuiPgj, konfirmasiPgj, tolakPgj, batalPgj } = btn.dataset;
+  const id = cekPgj || setujuiPgj || konfirmasiPgj || tolakPgj || batalPgj;
+  if (!id) return;
   const p = pengajuanData.find(x => x.id === id);
   if (!p) return;
+  const a = aksiPengajuan(p);
+  const saya = { id: currentUser.uid, nama: currentUserData?.nama || '' };
+  const ringkas = `<strong>${esc(getKategoriLabel(p.kategori))}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong> dari ${esc(p.pengajuNama || '-')}`;
 
-  if (konfId) {
-    confirmDelete(`Konfirmasi pengajuan <strong>${esc(getKategoriLabel(p.kategori))}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong>?<br>Ini akan masuk sebagai pengeluaran kas.`, async () => {
+  if (cekPgj && a.cek) {
+    confirmDelete(`Pengajuan ${ringkas} sudah dicek? Teruskan ke Approval.`, async () => {
       try {
-        // Transaksi: cegah konfirmasi dobel kalau dua orang menekan bersamaan
-        const pgjRef   = doc(db, 'lk_pengajuan_kas', p.id);
-        const kasirRef = doc(collection(db, 'lk_kasir'));
-        // Pengajuan kategori piutang → buat catatan piutang juga, ditautkan ke entri kas
-        const piuRef   = p.kategori === 'piutang' ? doc(collection(db, 'lk_piutang')) : null;
-        await runTransaction(db, async tx => {
-          const cur = await tx.get(pgjRef);
-          if (cur.data()?.status !== 'pending') throw new Error('Pengajuan ini sudah diproses');
-          // 1. Buat entry di kasir collection (pengeluaran)
-          tx.set(kasirRef, {
-          tgl: p.tgl,
-          jenis: 'pengeluaran',
-          kategori: p.kategori,
-          jumlah: p.jumlah,
-          supplierId: p.supplierId || null,
-          via: p.via,
-          rekeningId: p.rekeningId || null,
-          ket: p.ket || '',
-          inputBy:     currentUser.uid,
-          inputByNama: currentUserData?.nama || '',
-          inputByRole: currentRole || '',
-          sumberPengajuanId: p.id,
-          sumberPengajuanOleh: p.pengajuNama || '',
-          sumberPiutangId: piuRef?.id || null,
-          createdAt: serverTimestamp(),
-          });
-          if (piuRef) {
-            tx.set(piuRef, {
-              nama: p.piuNama || '(tanpa nama)', jumlah: p.jumlah, tgl: p.tgl,
-              cicilan: 0, tglCicilan: '',
-              ket: p.ket || `Dari pengajuan ${p.pengajuNama || ''}`,
-              status: 'aktif',
-              ...inputByFields(),
-              createdAt: serverTimestamp(),
-            });
-          }
-          // 2. Update pengajuan jadi done
-          tx.update(pgjRef, {
-            status: 'done',
-            konfirmasiId: currentUser.uid,
-            konfirmasiNama: currentUserData?.nama || '',
-            kasirDocId: kasirRef.id,
-            doneAt: serverTimestamp(),
-          });
+        await updateDoc(doc(db, 'lk_pengajuan_kas', p.id), {
+          status: 'approval', cekId: saya.id, cekNama: saya.nama, cekAt: serverTimestamp(),
         });
+        toast('Diteruskan ke Approval');
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, 'Teruskan ke Approval');
+  } else if (setujuiPgj && a.setujui) {
+    confirmDelete(`Setujui pengajuan ${ringkas}?<br>Pengajuan langsung tercatat sebagai pengeluaran kas.`, async () => {
+      try {
+        await catatPengajuanKeKas(p, 'approval', {
+          approvalId: saya.id, approvalNama: saya.nama, approvalAt: serverTimestamp(),
+        });
+        toast('Pengajuan disetujui & tercatat di kas');
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, 'Setujui');
+  } else if (konfirmasiPgj && a.konfirmasi) {
+    confirmDelete(`Konfirmasi pengajuan ${ringkas}?<br>Ini akan masuk sebagai pengeluaran kas.`, async () => {
+      try {
+        await catatPengajuanKeKas(p, 'pending', { konfirmasiId: saya.id, konfirmasiNama: saya.nama });
         toast('Pengajuan dikonfirmasi & masuk ke kas');
-      } catch (err) {
-        toast('Gagal: ' + err.message, 'error');
-      }
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
     }, 'Konfirmasi');
-  } else {
-    // Tolak — minta alasan via prompt sederhana
-    const reason = prompt('Alasan penolakan (opsional):') || '';
+  } else if (tolakPgj && a.tolak) {
+    const reason = prompt('Alasan penolakan (opsional):');
+    if (reason === null) return;
     try {
       await updateDoc(doc(db, 'lk_pengajuan_kas', p.id), {
-        status: 'rejected',
-        konfirmasiId: currentUser.uid,
-        konfirmasiNama: currentUserData?.nama || '',
-        rejectReason: reason,
-        doneAt: serverTimestamp(),
+        status: 'rejected', rejectReason: reason.trim(), ditolakTahap: p.status,
+        ditolakId: saya.id, ditolakNama: saya.nama, doneAt: serverTimestamp(),
       });
       toast('Pengajuan ditolak');
-    } catch (err) {
-      toast('Gagal: ' + err.message, 'error');
-    }
+    } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  } else if (batalPgj && a.batal) {
+    confirmDelete(`Batalkan pengajuan ${ringkas}?`, async () => {
+      try {
+        await deleteDoc(doc(db, 'lk_pengajuan_kas', p.id));
+        toast('Pengajuan dibatalkan');
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, 'Batalkan');
   }
 });
 
-// Badge angka di nav "Pengajuan" untuk kasir/admin
+// Badge angka: pengajuan yang menunggu tindakan user ini
 function updatePendingPengajuanBadge() {
-  const count = pengajuanData.filter(p => p.status === 'pending').length;
+  const count = pengajuanData.filter(p => {
+    const a = aksiPengajuan(p);
+    return a.cek || a.setujui || a.konfirmasi;
+  }).length;
   const badge = document.getElementById('badge-pending-pengajuan');
   if (badge) {
     if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
     else badge.classList.add('hidden');
   }
-  // Nav button "Pengajuan" — tampilkan badge untuk admin/kasir (yg perlu konfirmasi)
   const navPgj = document.querySelector('.nav-btn[data-page="pengajuan"]');
   if (navPgj) {
     const original = navPgj.dataset.originalText || navPgj.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
     navPgj.dataset.originalText = original;
-    const showBadge = ['developer', 'kasir'].includes(currentRole) && count > 0;
-    navPgj.textContent = showBadge ? `${original} (${count})` : original;
+    navPgj.textContent = count > 0 ? `${original} (${count})` : original;
   }
 }
 

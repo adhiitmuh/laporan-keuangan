@@ -412,6 +412,7 @@
         <!-- Form: Pengurus/Admin ajukan pengeluaran -->
         <div class="form-card action-form" id="form-pengajuan-wrap">
           <h3>📝 Ajukan Pengeluaran Baru</h3>
+          <p class="text-muted-sm" style="margin:-6px 0 12px">Alur: diajukan ke Checker (Owner) → diteruskan ke Approval → disetujui otomatis tercatat sebagai pengeluaran kas, dari tunai atau rekening yang dipilih.</p>
           <div class="form-grid">
             <div class="form-group">
               <label>Tanggal</label>
@@ -453,11 +454,11 @@
               <input type="text" id="pgj-ket" placeholder="Untuk apa pengeluaran ini" />
             </div>
           </div>
-          <button class="btn-primary" id="btn-simpan-pengajuan">Ajukan ke Kasir</button>
+          <button class="btn-primary" id="btn-simpan-pengajuan">Ajukan ke Checker</button>
         </div>
 
         <!-- Tabel: pengajuan pending (Kasir/Admin konfirmasi) -->
-        <h3 class="section-title">Menunggu Konfirmasi <span id="badge-pending-pengajuan" class="badge badge-hutang hidden" style="margin-left:6px"></span></h3>
+        <h3 class="section-title">Pengajuan Dalam Proses <span id="badge-pending-pengajuan" class="badge badge-hutang hidden" style="margin-left:6px"></span></h3>
         <div class="table-wrap">
           <table id="tbl-pengajuan-pending">
             <thead>
@@ -469,6 +470,7 @@
                 <th>Via</th>
                 <th>Keterangan</th>
                 <th>Diajukan Oleh</th>
+                <th>Tahap</th>
                 <th class="col-pengajuan-aksi">Aksi</th>
               </tr>
             </thead>
@@ -488,7 +490,7 @@
                 <th>Via</th>
                 <th>Diajukan</th>
                 <th>Status</th>
-                <th>Dikonfirmasi</th>
+                <th>Dicek / Disetujui</th>
               </tr>
             </thead>
             <tbody id="tbody-pengajuan-riwayat"></tbody>
@@ -1197,6 +1199,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261028b"></script>
+  <script type="module" src="app.js?v=20261028c"></script>
 </body>
 </html>
