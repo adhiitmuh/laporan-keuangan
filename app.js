@@ -3584,6 +3584,7 @@ function renderPiutang() {
           <button class="btn-sm btn-sm-gray" data-riwayat-piu="${esc(p.id)}">📋 Riwayat</button>
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${esc(p.id)}" data-nama="${esc(p.nama)}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-orange" data-ambil-lagi="${esc(p.id)}" data-nama="${esc(p.nama)}">💸 Ambil Lagi</button>` : ''}
+          ${!isReadOnly && canModify(p) ? `<button class="btn-sm btn-sm-blue" data-edit-piutang="${esc(p.id)}">✏️ Edit</button>` : ''}
           ${canRemovePiutang(p) ? `<button class="btn-sm btn-sm-red" data-del-piutang="${esc(p.id)}">Hapus</button>` : ''}
         </div>
       </td>
@@ -3620,7 +3621,84 @@ function renderPiutang() {
   setEl('tfoot-piu-sisa',     rupiah(totSisa));
 }
 
-// Tambah piutang baru
+// ── Edit piutang: form yang sama dipakai untuk tambah & edit ──
+let editingPiuId = null;
+
+// Entri kas "pinjaman awal" milik piutang (bukan entri cicilan / ambil lagi)
+const kasAwalPiutang = piuId => kasirData.find(k => k.sumberPiutangId === piuId && !k.sumberPiutangBayarId);
+const sumberDariKas  = k => !k ? 'none' : (!k.via || k.via === 'tunai') ? 'tunai' : (k.rekeningId || 'tunai');
+
+function resetFormPiutang() {
+  editingPiuId = null;
+  ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('piu-tgl').value    = today();
+  document.getElementById('piu-sumber').value = 'tunai';
+  document.getElementById('piu-form-title').textContent = 'Tambah Piutang';
+  document.getElementById('btn-simpan-piutang').textContent = 'Simpan Piutang';
+  document.getElementById('btn-batal-edit-piutang').style.display = 'none';
+  updatePiuSumberHint();
+}
+
+function mulaiEditPiutang(p) {
+  editingPiuId = p.id;
+  document.getElementById('piu-nama').value        = p.nama || '';
+  document.getElementById('piu-jumlah').value      = formatRibuan(p.jumlah || 0);
+  document.getElementById('piu-tgl').value         = p.tgl || today();
+  document.getElementById('piu-cicilan').value     = p.cicilan ? formatRibuan(p.cicilan) : '';
+  document.getElementById('piu-tgl-cicilan').value = p.tglCicilan || '';
+  document.getElementById('piu-ket').value         = p.ket || '';
+  document.getElementById('piu-sumber').value      = sumberDariKas(kasAwalPiutang(p.id));
+  document.getElementById('piu-form-title').textContent = `Edit Piutang — ${p.nama || ''}`;
+  document.getElementById('btn-simpan-piutang').textContent = '💾 Simpan Perubahan';
+  document.getElementById('btn-batal-edit-piutang').style.display = '';
+  updatePiuSumberHint();
+  document.getElementById('form-piutang-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+document.getElementById('btn-batal-edit-piutang')?.addEventListener('click', resetFormPiutang);
+
+async function simpanEditPiutang({ nama, jumlah, tgl, sumber, ket }) {
+  const p = piutangData.find(x => x.id === editingPiuId);
+  if (!p) { resetFormPiutang(); return; }
+  const kasLama = kasAwalPiutang(p.id);
+  const sumberLama = sumberDariKas(kasLama);
+  // Entri kas hanya diganti bila sumber, jumlah, atau tanggal berubah
+  const kasBerubah = sumber !== sumberLama
+    || (kasLama && (Number(kasLama.jumlah || 0) !== jumlah || kasLama.tgl !== tgl));
+  if (kasBerubah && kasLama && !canRemove(kasLama)) {
+    toast('Sumber uang piutang ini hanya bisa diubah oleh pencatatnya atau Owner', 'error');
+    return;
+  }
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'lk_piutang', p.id), {
+    nama, jumlah, tgl, ket,
+    cicilan:    parseRibuan(document.getElementById('piu-cicilan').value) || 0,
+    tglCicilan: document.getElementById('piu-tgl-cicilan').value,
+  });
+  if (kasBerubah) {
+    // Hapus lalu buat ulang (bukan update) — pengurus tidak boleh mengubah entri kas,
+    // tapi boleh menghapus/membuat entri kas yang tertaut ke piutang
+    if (kasLama) batch.delete(doc(db, 'lk_kasir', kasLama.id));
+    if (sumber !== 'none') {
+      batch.set(doc(collection(db, 'lk_kasir')), {
+        tgl, jumlah,
+        jenis: 'pengeluaran', kategori: 'piutang', supplierId: null,
+        via:        sumber === 'tunai' ? 'tunai' : 'transfer',
+        rekeningId: sumber === 'tunai' ? null : sumber,
+        ket:        `Auto — pinjaman ke ${nama}${ket ? ` (${ket})` : ''}`,
+        sumberPiutangId: p.id,
+        ...(kasLama?.sumberPengajuanId ? { sumberPengajuanId: kasLama.sumberPengajuanId, sumberPengajuanOleh: kasLama.sumberPengajuanOleh || '' } : {}),
+        ...inputByFields(),
+        createdAt: serverTimestamp(),
+      });
+    }
+  }
+  await batch.commit();
+  resetFormPiutang();
+  toast(kasBerubah ? 'Piutang diperbarui & saldo kas disesuaikan ✓' : 'Piutang diperbarui ✓');
+}
+
+// Tambah piutang baru (atau simpan perubahan bila sedang edit)
 document.getElementById('btn-simpan-piutang').addEventListener('click', async () => {
   const nama   = document.getElementById('piu-nama').value.trim();
   const jumlah = parseRibuan(document.getElementById('piu-jumlah').value) || 0;
@@ -3628,6 +3706,11 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
   const sumber = document.getElementById('piu-sumber').value;
   const ket    = document.getElementById('piu-ket').value.trim();
+  if (editingPiuId) {
+    try { await simpanEditPiutang({ nama, jumlah, tgl, sumber, ket }); }
+    catch (e) { toast('Gagal: ' + e.message, 'error'); }
+    return;
+  }
   try {
     // Uang yang dipinjamkan keluar dari kas (kecuali "tidak dicatat ke kas")
     const batch  = writeBatch(db);
@@ -3654,10 +3737,7 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
       });
     }
     await batch.commit();
-    ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('piu-tgl').value    = today();
-    document.getElementById('piu-sumber').value = 'tunai';
-    updatePiuSumberHint();
+    resetFormPiutang();
     toast('Piutang berhasil disimpan ✓');
   } catch (e) { toast('Gagal: ' + e.message, 'error'); }
 });
@@ -3730,6 +3810,12 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
     const panel = document.getElementById('panel-catat-bayar');
     panel.style.display = '';
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  const editId = e.target.dataset.editPiutang;
+  if (editId) {
+    const p = piutangData.find(x => x.id === editId);
+    if (p && canModify(p)) mulaiEditPiutang(p);
     return;
   }
   const delId = e.target.dataset.delPiutang;
