@@ -356,6 +356,8 @@ function applyRoleUI(role) {
   // Tombol "Ajukan Kategori" — hanya admin/pengurus/kasir (bukan pengawas)
   const btnAjukan = document.getElementById('btn-ajukan-kategori');
   if (btnAjukan) btnAjukan.style.display = ['developer', 'pengurus', 'kasir'].includes(role) ? '' : 'none';
+  const btnAjukanPgj = document.getElementById('btn-ajukan-kategori-pgj');
+  if (btnAjukanPgj) btnAjukanPgj.style.display = ['developer', 'pengurus'].includes(role) ? '' : 'none';
 }
 
 // Helper: apakah role saat ini boleh approve
@@ -661,6 +663,7 @@ function startListeners() {
       try { await seedKategoriSistem(); } catch {}
     }
     populateKategoriSelect();
+    populatePengajuanKategoriSelect();
     renderPendingKategori();
     renderKategoriAktif();
     updatePendingKategoriBadge();
@@ -2588,15 +2591,17 @@ function renderLaporanIfActive() {
   }
 }
 
-// ── Tombol "Ajukan Kategori Baru" ──
-document.getElementById('btn-ajukan-kategori')?.addEventListener('click', () => {
+// ── Tombol "Ajukan Kategori Baru" (form Kasir & form Pengajuan) ──
+function bukaModalKategori(jenis = 'pengeluaran') {
   if (!['developer', 'pengurus', 'kasir'].includes(currentRole)) return;
   ['kat-label', 'kat-ket'].forEach(id => { document.getElementById(id).value = ''; });
-  document.getElementById('kat-jenis').value = 'pengeluaran';
+  document.getElementById('kat-jenis').value = jenis;
   document.getElementById('kat-tipe').value  = 'bisnis';
   document.getElementById('kat-error').classList.add('hidden');
   document.getElementById('modal-kategori').classList.remove('hidden');
-});
+}
+document.getElementById('btn-ajukan-kategori')?.addEventListener('click', () => bukaModalKategori());
+document.getElementById('btn-ajukan-kategori-pgj')?.addEventListener('click', () => bukaModalKategori('pengeluaran'));
 
 ['btn-kat-close', 'btn-kat-cancel'].forEach(id => {
   document.getElementById(id)?.addEventListener('click', () => {
@@ -2809,6 +2814,7 @@ function populatePengajuanKategoriSelect() {
     });
     sel.appendChild(og);
   }
+  if (!list.length) sel.innerHTML = '<option value="">Belum ada kategori — klik "+ Ajukan Baru"</option>';
   if (prev && list.some(k => k.key === prev)) sel.value = prev;
   togglePgjSupplierWrap();
 }
