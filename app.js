@@ -83,6 +83,7 @@ let piutangBayar    = [];  // riwayat pembayaran piutang
 let mutasiData      = [];  // transfer internal tunai ↔ rekening
 let kategoriData    = [];  // kategori (sistem + custom + pending)
 let pengajuanData   = [];  // pengajuan pengeluaran (pending/done/rejected)
+let pengajuanTransfer = [];  // pengajuan transfer pengurus (menunggu/disetujui/ditolak)
 let saldoAwalTunai  = 0;   // dari Firestore settings/saldo-awal
 let editingSupId    = null; // id supplier yang sedang diedit
 let bayarPembelianId   = null; // id pembelian yang sedang dikonfirmasi bayar
@@ -308,6 +309,9 @@ function applyRoleUI(role) {
     if (el) el.style.display = isReadOnly ? 'none' : '';
   });
 
+  const btnMutasi = document.getElementById('btn-simpan-mutasi');
+  if (btnMutasi) btnMutasi.textContent = role === 'developer' ? 'Simpan Transfer' : 'Ajukan Transfer ke Adi';
+
   const kasirLihatSaja = role === 'pengurus';
   ['form-kasir-wrap', 'kasir-antrian-wrap'].forEach(id => {
     const el = document.getElementById(id);
@@ -388,7 +392,7 @@ function navigateTo(page) {
   if (page === 'admin')     renderUsers();
   if (page === 'rekening')  renderRekening();
   if (page === 'piutang')   renderPiutang();
-  if (page === 'transfer')  renderMutasi();
+  if (page === 'transfer')  { renderMutasi(); renderPengajuanTransfer(); }
   if (page === 'pengajuan') {
     populatePengajuanKategoriSelect();
     const tglEl = document.getElementById('pgj-tgl');
@@ -616,6 +620,12 @@ function startListeners() {
     renderDashboard();
     renderRekening();
     renderMutasi();
+  }));
+
+  // pengajuan transfer dari pengurus (belum memengaruhi saldo sampai disetujui Owner)
+  unsubs.push(onSnap(query(collection(db, 'lk_pengajuan_transfer'), orderBy('createdAt', 'desc')), snap => {
+    pengajuanTransfer = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPengajuanTransfer();
   }));
 
   // piutang
@@ -1014,18 +1024,159 @@ document.getElementById('btn-simpan-mutasi').addEventListener('click', async () 
   if (!tgl)         { toast('Tanggal wajib diisi', 'error'); return; }
   const dariLabel = dari === 'tunai' ? 'Tunai' : (rekening.find(r => r.id === dari)?.nama || dari);
   const keLabel   = ke   === 'tunai' ? 'Tunai' : (rekening.find(r => r.id === ke)?.nama   || ke);
+  const ket = document.getElementById('mut-ket').value.trim() || `Transfer ${dariLabel} → ${keLabel}`;
+  const ajukan = isTransferPerluApproval();
   try {
-    await addDoc(collection(db, 'lk_mutasi'), {
-      dari, ke, jumlah, tgl,
-      dariLabel, keLabel,
-      ket: document.getElementById('mut-ket').value.trim() || `Transfer ${dariLabel} → ${keLabel}`,
-      ...inputByFields(),
-      createdAt: serverTimestamp(),
-    });
+    if (ajukan) {
+      await addDoc(collection(db, 'lk_pengajuan_transfer'), {
+        dari, ke, jumlah, tgl, dariLabel, keLabel, ket,
+        status: 'menunggu',
+        ...inputByFields(),
+        pengajuId:   currentUser.uid,
+        pengajuNama: currentUserData?.nama || '',
+        pengajuRole: currentRole || '',
+        createdAt:   serverTimestamp(),
+      });
+    } else {
+      await addDoc(collection(db, 'lk_mutasi'), {
+        dari, ke, jumlah, tgl, dariLabel, keLabel, ket,
+        ...inputByFields(),
+        createdAt: serverTimestamp(),
+      });
+    }
     ['mut-jumlah', 'mut-ket'].forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('mut-tgl').value = today();
-    toast(`✓ Transfer ${dariLabel} → ${keLabel} berhasil dicatat`);
+    if (ajukan) {
+      toast('Pengajuan transfer terkirim, menunggu persetujuan');
+      tawarkanWA('Pengajuan transfer terkirim. Kabari Adi lewat WhatsApp?',
+        pesanTransfer({ dariLabel, keLabel, jumlah, tgl, ket, pengajuNama: currentUserData?.nama || '' },
+          '🔄 Pengajuan transfer baru, mohon disetujui'));
+    } else {
+      toast(`✓ Transfer ${dariLabel} → ${keLabel} berhasil dicatat`);
+    }
   } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+});
+
+// ── Pengajuan transfer: pengurus mengajukan, Owner menyetujui (baru tercatat di lk_mutasi) ──
+const isTransferPerluApproval = () => currentRole !== 'developer';
+
+function pesanTransfer(t, judul, tambahan = []) {
+  return [
+    judul, '',
+    `Dari: ${t.pengajuNama || '-'}`,
+    `Tanggal: ${t.tgl}`,
+    `Transfer: ${t.dariLabel} → ${t.keLabel}`,
+    `Jumlah: ${rupiah(t.jumlah)}`,
+    t.ket ? `Keterangan: ${t.ket}` : null,
+    ...tambahan, '',
+    'https://adhiitmuh.github.io/laporan-keuangan/#transfer',
+  ].filter(v => v !== null).join('\n');
+}
+
+function renderPengajuanTransfer() {
+  const wrap  = document.getElementById('pengajuan-transfer-wrap');
+  const tbody = document.getElementById('tbody-pengajuan-transfer');
+  if (!wrap || !tbody) return;
+  const menunggu = pengajuanTransfer.filter(t => t.status === 'menunggu');
+  const selesai  = pengajuanTransfer.filter(t => t.status !== 'menunggu').slice(0, 15);
+  const list = [...menunggu, ...selesai];
+  wrap.style.display = list.length ? '' : 'none';
+  updateTransferBadge();
+  if (!list.length) return;
+
+  tbody.innerHTML = list.map(t => {
+    const milikSaya = t.pengajuId === currentUser?.uid;
+    const status = t.status === 'menunggu'
+      ? '<span class="badge badge-po-pending">Menunggu Adi</span>'
+      : t.status === 'disetujui'
+        ? `<span class="badge badge-lunas">✓ Disetujui</span>${t.approvalNama ? `<br><small style="color:#9ca3af">${esc(t.approvalNama)}</small>` : ''}`
+        : `<span class="badge badge-hutang">Ditolak</span>${t.rejectReason ? `<br><small style="color:#9ca3af">${esc(t.rejectReason)}</small>` : ''}`;
+    const tombol = t.status !== 'menunggu' ? '' : [
+      currentRole === 'developer' ? `<button class="btn-sm btn-sm-green" data-setujui-tf="${esc(t.id)}">✓ Setujui</button>` : '',
+      currentRole === 'developer' ? `<button class="btn-sm btn-sm-red" data-tolak-tf="${esc(t.id)}">Tolak</button>` : '',
+      milikSaya ? `<button class="btn-sm btn-sm-green" data-ingatkan-tf="${esc(t.id)}">📲 Ingatkan</button>` : '',
+      milikSaya ? `<button class="btn-sm btn-sm-gray" data-batal-tf="${esc(t.id)}">Batalkan</button>` : '',
+    ].join(' ');
+    return `<tr>
+      <td>${esc(t.tgl)}</td>
+      <td><strong>${esc(t.dariLabel || t.dari)}</strong></td>
+      <td><strong>${esc(t.keLabel || t.ke)}</strong></td>
+      <td><strong>${rupiah(t.jumlah)}</strong></td>
+      <td>${esc(t.ket || '–')}</td>
+      <td><span style="font-size:12px;font-weight:600">${esc(t.pengajuNama || '–')}</span></td>
+      <td>${status}</td>
+      <td><div style="display:flex;gap:4px;flex-wrap:wrap">${tombol || '<span class="text-muted-sm">–</span>'}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function updateTransferBadge() {
+  const nav = document.querySelector('.nav-btn[data-page="transfer"]');
+  if (!nav) return;
+  const count = currentRole === 'developer' ? pengajuanTransfer.filter(t => t.status === 'menunggu').length : 0;
+  const original = nav.dataset.originalText || nav.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+  nav.dataset.originalText = original;
+  nav.textContent = count > 0 ? `${original} (${count})` : original;
+}
+
+document.getElementById('tbody-pengajuan-transfer')?.addEventListener('click', async e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const { setujuiTf, tolakTf, ingatkanTf, batalTf } = btn.dataset;
+  const id = setujuiTf || tolakTf || ingatkanTf || batalTf;
+  const t = pengajuanTransfer.find(x => x.id === id);
+  if (!t || t.status !== 'menunggu') return;
+  const saya = { id: currentUser.uid, nama: currentUserData?.nama || '' };
+  const ringkas = `<strong>${esc(t.dariLabel)} → ${esc(t.keLabel)}</strong> sebesar <strong>${rupiah(t.jumlah)}</strong> dari ${esc(t.pengajuNama || '-')}`;
+
+  if (setujuiTf && currentRole === 'developer') {
+    confirmDelete(`Setujui transfer ${ringkas}?<br>Saldo kedua akun langsung berubah.`, async () => {
+      try {
+        const tfRef  = doc(db, 'lk_pengajuan_transfer', t.id);
+        const mutRef = doc(collection(db, 'lk_mutasi'));
+        await runTransaction(db, async tx => {
+          const cur = await tx.get(tfRef);
+          if (cur.data()?.status !== 'menunggu') throw new Error('Pengajuan ini sudah diproses');
+          tx.set(mutRef, {
+            dari: t.dari, ke: t.ke, jumlah: t.jumlah, tgl: t.tgl,
+            dariLabel: t.dariLabel, keLabel: t.keLabel, ket: t.ket || '',
+            ...inputByFields(),
+            diajukanOleh: t.pengajuNama || '',
+            sumberPengajuanTransferId: t.id,
+            createdAt: serverTimestamp(),
+          });
+          tx.update(tfRef, {
+            status: 'disetujui', mutasiDocId: mutRef.id,
+            approvalId: saya.id, approvalNama: saya.nama, approvalAt: serverTimestamp(),
+          });
+        });
+        toast('Transfer disetujui & tercatat');
+        tawarkanWA(`Transfer disetujui. Kabari ${esc(t.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+          pesanTransfer(t, '✅ Pengajuan transfer DISETUJUI', [`Disetujui: ${saya.nama}`, 'Sudah tercatat, silakan lakukan transfernya.']));
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, 'Setujui');
+  } else if (tolakTf && currentRole === 'developer') {
+    const reason = prompt('Alasan penolakan (opsional):');
+    if (reason === null) return;
+    try {
+      await updateDoc(doc(db, 'lk_pengajuan_transfer', t.id), {
+        status: 'ditolak', rejectReason: reason.trim(),
+        ditolakId: saya.id, ditolakNama: saya.nama, ditolakAt: serverTimestamp(),
+      });
+      toast('Pengajuan transfer ditolak');
+      tawarkanWA(`Pengajuan transfer ditolak. Kabari ${esc(t.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+        pesanTransfer(t, '❌ Pengajuan transfer DITOLAK', [`Ditolak: ${saya.nama}`, reason.trim() ? `Alasan: ${reason.trim()}` : null].filter(Boolean)));
+    } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  } else if (ingatkanTf && t.pengajuId === saya.id) {
+    window.open('https://wa.me/?text=' + encodeURIComponent(pesanTransfer(t, '⏰ Pengingat: pengajuan transfer menunggu persetujuan')), '_blank');
+  } else if (batalTf && t.pengajuId === saya.id) {
+    confirmDelete(`Batalkan pengajuan transfer ${ringkas}?`, async () => {
+      try {
+        await deleteDoc(doc(db, 'lk_pengajuan_transfer', t.id));
+        toast('Pengajuan transfer dibatalkan');
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, 'Batalkan');
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1415,8 +1566,8 @@ function renderMutasi() {
       <td><strong>${esc(m.keLabel || m.ke)}</strong></td>
       <td class="text-green"><strong>${rupiah(m.jumlah)}</strong></td>
       <td>${esc(m.ket || '–')}</td>
-      <td>${inputByBadge(m)}</td>
-      <td>${canRemove(m) ? `<button class="btn-sm btn-sm-red" data-del-mutasi="${esc(m.id)}">Hapus</button>` : ''}</td>
+      <td>${inputByBadge(m)}${m.diajukanOleh ? `<br><small style="color:#9ca3af">diajukan ${esc(m.diajukanOleh)}</small>` : ''}</td>
+      <td>${currentRole === 'developer' ? `<button class="btn-sm btn-sm-red" data-del-mutasi="${esc(m.id)}">Hapus</button>` : ''}</td>
     `;
     tbody.appendChild(tr);
   });
