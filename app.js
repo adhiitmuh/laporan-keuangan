@@ -713,6 +713,18 @@ function rekeningName(id) {
   return r ? `${r.nama} (${r.bank})` : id;
 }
 
+
+// Petunjuk form piutang: dari kas (uang diserahkan sekarang) vs tidak dicatat ke kas
+function updatePiuSumberHint() {
+  const sel = document.getElementById('piu-sumber');
+  const hint = document.getElementById('piu-sumber-hint');
+  if (!sel || !hint) return;
+  hint.textContent = sel.value === 'none'
+    ? 'Saldo kas tidak berubah; piutang & total aset bertambah. Untuk piutang lama atau barang yang dibawa dulu (belum bayar).'
+    : 'Uang diserahkan sekarang dari akun ini: saldonya berkurang, piutang bertambah, total aset tetap.';
+}
+document.getElementById('piu-sumber')?.addEventListener('change', updatePiuSumberHint);
+
 function populateRekeningSelects() {
   // Dropdown kasir + pengajuan (pilih rekening transfer)
   ['kas-rekening', 'pgj-rekening'].forEach(selId => {
@@ -763,6 +775,7 @@ function populateRekeningSelects() {
     sel.appendChild(none);
     sel.value = prevVal || 'tunai';
   });
+  updatePiuSumberHint();
 
   // Dropdown mutasi: dari & ke (Tunai + semua rekening)
   ['mut-dari', 'mut-ke'].forEach(selId => {
@@ -3644,6 +3657,7 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
     ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('piu-tgl').value    = today();
     document.getElementById('piu-sumber').value = 'tunai';
+    updatePiuSumberHint();
     toast('Piutang berhasil disimpan ✓');
   } catch (e) { toast('Gagal: ' + e.message, 'error'); }
 });
