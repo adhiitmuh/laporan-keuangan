@@ -144,20 +144,37 @@ body {
 /* ═══════════════════════════════════════════════════════
    TOPBAR
 ═══════════════════════════════════════════════════════ */
+/* Grid dengan baris tetap (bukan flex-wrap): tinggi header selalu terhitung benar di
+   iPad/WebKit saat menempel di atas. Menu satu baris, digeser ke samping bila tidak muat. */
 .topbar {
   background: linear-gradient(135deg, var(--brand-darker) 0%, var(--brand) 50%, var(--brand-mid) 100%);
-  display: flex; align-items: center; gap: 8px 20px;
-  padding: 8px 24px; min-height: 60px;   /* menu boleh turun baris di layar sempit (iPad) — latar ikut memanjang */
+  display: grid; align-items: center; gap: 6px 20px;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "brand actions" "nav nav";
+  padding: 8px 24px;
   position: sticky; top: 0; z-index: 100;
   box-shadow: 0 4px 16px rgba(3,69,67,.4);
-  flex-wrap: wrap;
+}
+.topbar-brand  { grid-area: brand; }
+.topbar-nav    { grid-area: nav; }
+.topbar-actions { grid-area: actions; justify-self: end; }
+@media (min-width: 1800px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "brand nav actions"; min-height: 60px; }
+}
+@media (max-width: 600px) {
+  .topbar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "brand" "actions" "nav"; }
+  .topbar-actions { justify-self: start; }
 }
 .topbar-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 15px; white-space: nowrap; }
 .brand-icon { font-size: 22px; }
 .brand-name { color: rgba(255,255,255,.95); letter-spacing: -.2px; }
 .brand-tagline { font-size: 10px; font-weight: 500; color: rgba(255,251,213,.6); letter-spacing: .8px; text-transform: uppercase; display: block; }
-.topbar-nav { display: flex; gap: 2px; flex-wrap: wrap; }
-.topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.topbar-nav { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);   /* tanda menu bisa digeser */
+          mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  padding-right: 28px; }
+.topbar-nav::-webkit-scrollbar { display: none; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .topbar .btn-sm-topbar {   /* .topbar agar tidak tertimpa .btn-outline (latar putih) */
   padding: 6px 12px; font-size: 12px; white-space: nowrap; cursor: pointer;
   background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
@@ -185,7 +202,8 @@ body {
   display: inline-block; padding: 3px 10px; border-radius: 99px;
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
 }
-.role-badge.role-admin    { background: #FFFBD5; color: var(--brand-dark); }
+.role-badge.role-admin, .role-badge.role-developer { background: #FFFBD5; color: var(--brand-dark); }
+.role-badge.role-pemilik  { background: #ede9fe; color: #5b21b6; }
 .role-badge.role-pengurus { background: #dbeafe; color: #1e40af; }
 .role-badge.role-kasir    { background: var(--brand-light); color: var(--brand-dark); }
 .role-badge.role-pengawas { background: rgba(255,255,255,.2); color: var(--white); }
@@ -530,8 +548,7 @@ tbody tr:hover { background: var(--brand-tint); }
    RESPONSIVE
 ═══════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
-  .topbar { height: auto; padding: 10px 16px; gap: 10px; }
-  .topbar-actions { flex-wrap: wrap; }
+  .topbar { padding: 10px 16px; gap: 8px 10px; }
   .user-name { display: none; }
   .content { padding: 16px 12px; }
   .budget-widget { flex-direction: column; gap: 16px; }

@@ -384,6 +384,8 @@ function setUserBadge(data) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function navigateTo(page) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  // Menu bisa digeser ke samping di layar sempit — pastikan menu aktif terlihat
+  document.querySelector(`.nav-btn[data-page="${page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pageEl = document.getElementById('page-' + page);
   if (pageEl) pageEl.classList.add('active');
