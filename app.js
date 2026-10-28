@@ -238,9 +238,13 @@ function showScreen(name) {
 const ROLE_PAGES = {
   developer: ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
   pemilik:   ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
-  pengurus:  ['dashboard', 'pembelian', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  pengurus:  ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
   kasir:     ['kasir', 'pengajuan', 'pembelian'],
 };
+
+// Halaman Kasir untuk pengurus hanya untuk dilihat — input/edit/hapus kas oleh kasir & admin.
+// (Entri kas otomatis dari bayar pembelian & piutang tetap dibuat dari halaman masing-masing.)
+const isKasirLihatSaja = () => currentRole === 'pengurus';
 
 function applyRoleUI(role) {
   // Nav buttons
@@ -255,6 +259,12 @@ function applyRoleUI(role) {
   ['form-pembelian-wrap', 'form-kasir-wrap', 'form-supplier-wrap', 'form-po-wrap', 'form-anggaran-wrap', 'form-piutang-wrap', 'form-mutasi-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isReadOnly ? 'none' : '';
+  });
+
+  const kasirLihatSaja = role === 'pengurus';
+  ['form-kasir-wrap', 'kasir-antrian-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && kasirLihatSaja) el.style.display = 'none';
   });
 
   // Form pengajuan pengeluaran — hanya admin & pengurus (kasir tidak ajukan, hanya konfirmasi)
@@ -283,6 +293,9 @@ function applyRoleUI(role) {
   // Hide hapus buttons via CSS class on the column header (rendered dynamically too)
   document.querySelectorAll('.col-aksi').forEach(th => {
     th.style.display = isReadOnly ? 'none' : '';
+  });
+  document.querySelectorAll('.col-aksi-kasir').forEach(th => {
+    if (kasirLihatSaja) th.style.display = 'none';
   });
 
   // Approval UI hanya untuk admin & pengurus
@@ -1430,7 +1443,7 @@ function renderKasir(filter = kasirFilter) {
         <td>${!k.via || k.via === 'tunai' ? 'Tunai' : esc(rekeningName(k.rekeningId))}</td>
         <td>${esc(k.ket || '-')}</td>
         <td>${inputByBadge(k)}</td>
-        <td>
+        <td style="${isKasirLihatSaja() ? 'display:none' : ''}">
           <div style="display:flex;gap:4px">
             ${canModify(k) && !isKasOtomatis(k) ? `<button class="btn-sm btn-sm-blue" data-edit-kas="${esc(k.id)}">✏️ Edit</button>` : ''}
             ${canRemove(k) && !(k.sumberPiutangId && !k.sumberPiutangBayarId)
@@ -1645,6 +1658,7 @@ document.getElementById('btn-filter-kas').addEventListener('click', () => {
 });
 
 document.getElementById('tbody-kasir').addEventListener('click', e => {
+  if (isKasirLihatSaja()) return;
   const editId = e.target.dataset.editKas;
   if (editId) {
     const k = kasirData.find(x => x.id === editId);
