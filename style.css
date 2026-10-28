@@ -146,8 +146,8 @@ body {
 ═══════════════════════════════════════════════════════ */
 .topbar {
   background: linear-gradient(135deg, var(--brand-darker) 0%, var(--brand) 50%, var(--brand-mid) 100%);
-  display: flex; align-items: center; gap: 20px;
-  padding: 0 24px; height: 60px;
+  display: flex; align-items: center; gap: 8px 20px;
+  padding: 8px 24px; min-height: 60px;   /* menu boleh turun baris di layar sempit (iPad) — latar ikut memanjang */
   position: sticky; top: 0; z-index: 100;
   box-shadow: 0 4px 16px rgba(3,69,67,.4);
   flex-wrap: wrap;
@@ -158,13 +158,13 @@ body {
 .brand-tagline { font-size: 10px; font-weight: 500; color: rgba(255,251,213,.6); letter-spacing: .8px; text-transform: uppercase; display: block; }
 .topbar-nav { display: flex; gap: 2px; flex-wrap: wrap; }
 .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.btn-sm-topbar {
+.topbar .btn-sm-topbar {   /* .topbar agar tidak tertimpa .btn-outline (latar putih) */
   padding: 6px 12px; font-size: 12px; white-space: nowrap; cursor: pointer;
   background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
   color: rgba(255,255,255,.9); border-radius: 7px; font-weight: 600;
   transition: all .15s; font-family: inherit;
 }
-.btn-sm-topbar:hover { background: rgba(255,251,213,.18); }
+.topbar .btn-sm-topbar:hover { background: rgba(255,251,213,.18); color: var(--white); }
 
 .nav-btn {
   background: none; border: none; padding: 7px 14px; border-radius: 8px;
