@@ -238,7 +238,7 @@ function showScreen(name) {
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
   developer: ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
-  pemilik:   ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  pemilik:   ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'rekening', 'piutang', 'transfer', 'laporan'],
   pengurus:  ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
   kasir:     ['kasir', 'pengajuan', 'pembelian'],
 };
@@ -3870,6 +3870,7 @@ function renderRekening() {
     return;
   }
   tbody.innerHTML = '';
+  const bolehUbahRek = ['developer', 'pengurus'].includes(currentRole);   // sama dengan form saldo/rekening
   rekening.forEach(r => {
     const saldoAwal   = Number(r.saldoAwal || 0);
     const mutMasuk    = mutasiData.filter(m => m.ke   === r.id).reduce((a, m) => a + Number(m.jumlah || 0), 0);
@@ -3886,12 +3887,12 @@ function renderRekening() {
       <td class="cell-saldo-awal" data-rek-id="${esc(r.id)}">
         <div class="saldo-awal-display" style="display:flex;align-items:center;gap:6px">
           <span>${rupiah(saldoAwal)}</span>
-          <button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${esc(r.id)}" data-current="${saldoAwal}" title="Ubah saldo awal">✏️</button>
+          ${bolehUbahRek ? `<button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${esc(r.id)}" data-current="${saldoAwal}" title="Ubah saldo awal">✏️</button>` : ''}
         </div>
       </td>
       <td class="${saldoSkrng >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoSkrng)}</strong></td>
       <td>
-        <button class="btn-sm btn-sm-red" data-del-rek="${esc(r.id)}">Hapus</button>
+        ${bolehUbahRek ? `<button class="btn-sm btn-sm-red" data-del-rek="${esc(r.id)}">Hapus</button>` : ''}
       </td>
     `;
     tbody.appendChild(tr);
