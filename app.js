@@ -319,9 +319,12 @@ function applyRoleUI(role) {
   });
 
   // Form pengajuan pengeluaran — hanya admin & pengurus (kasir tidak ajukan, hanya konfirmasi)
-  const canAjukan = role === 'developer' || role === 'pengurus';
+  // Approver tidak membuat pengajuan pengeluaran (pengajuannya sendiri tidak bisa ia setujui)
+  const canAjukan = role === 'developer' || (role === 'pengurus' && !isApproverPengajuan());
   const formPgj = document.getElementById('form-pengajuan-wrap');
   if (formPgj) formPgj.style.display = canAjukan ? '' : 'none';
+  const notePgj = document.getElementById('pengajuan-approver-note');
+  if (notePgj) notePgj.style.display = role === 'pengurus' && isApproverPengajuan() ? '' : 'none';
 
 
   // Saldo awal hanya admin & pengurus
@@ -2824,7 +2827,7 @@ document.getElementById('pgj-via')?.addEventListener('change', function () {
 
 // Submit pengajuan
 document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async () => {
-  if (!['developer', 'pengurus'].includes(currentRole)) { toast('Tidak ada akses', 'error'); return; }
+  if (!(currentRole === 'developer' || (currentRole === 'pengurus' && !isApproverPengajuan()))) { toast('Tidak ada akses', 'error'); return; }
   const tgl       = document.getElementById('pgj-tgl').value;
   const kategori  = document.getElementById('pgj-kategori').value;
   const jumlah    = parseRibuan(document.getElementById('pgj-jumlah').value);

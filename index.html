@@ -410,6 +410,9 @@
         <h2 class="page-title">Pengajuan Pengeluaran</h2>
 
         <!-- Form: Pengurus/Admin ajukan pengeluaran -->
+        <div id="pengajuan-approver-note" class="form-card" style="display:none">
+          <p class="text-muted-sm" style="margin:0">Kamu adalah <strong>Approver</strong> pengajuan pengeluaran: pengajuan dibuat oleh pengurus lain, dicek Adi, lalu kamu setujui di tabel di bawah.</p>
+        </div>
         <div class="form-card action-form" id="form-pengajuan-wrap">
           <h3>📝 Ajukan Pengeluaran Baru</h3>
           <p class="text-muted-sm" style="margin:-6px 0 12px">Alur: diajukan ke Checker (Adi) → diteruskan ke Approval → disetujui otomatis tercatat sebagai pengeluaran kas, dari tunai atau rekening yang dipilih.</p>
@@ -1221,6 +1224,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261028e"></script>
+  <script type="module" src="app.js?v=20261028f"></script>
 </body>
 </html>
