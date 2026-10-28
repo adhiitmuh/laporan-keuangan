@@ -91,6 +91,9 @@ let bayarPembelianId   = null; // id pembelian yang sedang dikonfirmasi bayar
 // User yang sedang login
 let currentUser     = null; // Firebase Auth user object
 let currentUserData = null; // Firestore users/{uid} document data
+// Nama lama (username) yang sudah tersimpan di catatan → nama tampilan
+const NAMA_LAMA = { adhiitmuhsoc: 'Adi' };
+const nm = n => NAMA_LAMA[n] || n;
 let currentRole     = null; // string: 'developer' | 'pemilik' | 'pengurus' | 'kasir'
 
 
@@ -369,7 +372,7 @@ function setUserBadge(data) {
   setEl('user-name', data.nama || data.email || '');
   const badge = document.getElementById('user-role-badge');
   if (badge) {
-    badge.textContent = data.role;
+    badge.textContent = data.role === 'developer' ? 'owner' : data.role;
     badge.className = 'role-badge role-' + data.role;
   }
   const welcomeName = document.getElementById('dash-welcome-name');
@@ -526,6 +529,11 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     }
 
     const userData = { ...rawData, role: mappedRole, email: firebaseUser.email, isOwner: rawData.role === 'owner' };
+    // Nama Owner masih berupa username → tampilkan & simpan sebagai "Adi"
+    if (userData.isOwner && (!userData.nama || NAMA_LAMA[userData.nama])) {
+      userData.nama = 'Adi';
+      updateDoc(doc(db, 'users', firebaseUser.uid), { nama: 'Adi' }).catch(() => {});
+    }
 
     currentUser     = firebaseUser;
     currentUserData = userData;
@@ -1112,7 +1120,7 @@ function renderPengajuanTransfer() {
     const status = t.status === 'menunggu'
       ? '<span class="badge badge-po-pending">Menunggu Adi</span>'
       : t.status === 'disetujui'
-        ? `<span class="badge badge-lunas">✓ Disetujui</span>${t.approvalNama ? `<br><small style="color:#9ca3af">${esc(t.approvalNama)}</small>` : ''}`
+        ? `<span class="badge badge-lunas">✓ Disetujui</span>${t.approvalNama ? `<br><small style="color:#9ca3af">${esc(nm(t.approvalNama))}</small>` : ''}`
         : `<span class="badge badge-hutang">Ditolak</span>${t.rejectReason ? `<br><small style="color:#9ca3af">${esc(t.rejectReason)}</small>` : ''}`;
     const tombol = t.status !== 'menunggu' ? '' : [
       currentRole === 'developer' ? `<button class="btn-sm btn-sm-green" data-setujui-tf="${esc(t.id)}">✓ Setujui</button>` : '',
@@ -1126,7 +1134,7 @@ function renderPengajuanTransfer() {
       <td><strong>${esc(t.keLabel || t.ke)}</strong></td>
       <td><strong>${rupiah(t.jumlah)}</strong></td>
       <td>${esc(t.ket || '–')}</td>
-      <td><span style="font-size:12px;font-weight:600">${esc(t.pengajuNama || '–')}</span></td>
+      <td><span style="font-size:12px;font-weight:600">${esc(nm(t.pengajuNama) || '–')}</span></td>
       <td>${status}</td>
       <td><div style="display:flex;gap:4px;flex-wrap:wrap">${tombol || '<span class="text-muted-sm">–</span>'}</div></td>
     </tr>`;
@@ -1150,7 +1158,7 @@ document.getElementById('tbody-pengajuan-transfer')?.addEventListener('click', a
   const t = pengajuanTransfer.find(x => x.id === id);
   if (!t || t.status !== 'menunggu') return;
   const saya = { id: currentUser.uid, nama: currentUserData?.nama || '' };
-  const ringkas = `<strong>${esc(t.dariLabel)} → ${esc(t.keLabel)}</strong> sebesar <strong>${rupiah(t.jumlah)}</strong> dari ${esc(t.pengajuNama || '-')}`;
+  const ringkas = `<strong>${esc(t.dariLabel)} → ${esc(t.keLabel)}</strong> sebesar <strong>${rupiah(t.jumlah)}</strong> dari ${esc(nm(t.pengajuNama) || '-')}`;
 
   if (setujuiTf && currentRole === 'developer') {
     confirmDelete(`Setujui transfer ${ringkas}?<br>Saldo kedua akun langsung berubah.`, async () => {
@@ -1174,7 +1182,7 @@ document.getElementById('tbody-pengajuan-transfer')?.addEventListener('click', a
           });
         });
         toast('Transfer disetujui & tercatat');
-        tawarkanWA(`Transfer disetujui. Kabari ${esc(t.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+        tawarkanWA(`Transfer disetujui. Kabari ${esc(nm(t.pengajuNama) || 'pengaju')} lewat WhatsApp?`,
           pesanTransfer(t, '✅ Pengajuan transfer DISETUJUI', [`Disetujui: ${saya.nama}`, 'Sudah tercatat, silakan lakukan transfernya.']));
       } catch (err) { toast('Gagal: ' + err.message, 'error'); }
     }, 'Setujui');
@@ -1187,7 +1195,7 @@ document.getElementById('tbody-pengajuan-transfer')?.addEventListener('click', a
         ditolakId: saya.id, ditolakNama: saya.nama, ditolakAt: serverTimestamp(),
       });
       toast('Pengajuan transfer ditolak');
-      tawarkanWA(`Pengajuan transfer ditolak. Kabari ${esc(t.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+      tawarkanWA(`Pengajuan transfer ditolak. Kabari ${esc(nm(t.pengajuNama) || 'pengaju')} lewat WhatsApp?`,
         pesanTransfer(t, '❌ Pengajuan transfer DITOLAK', [`Ditolak: ${saya.nama}`, reason.trim() ? `Alasan: ${reason.trim()}` : null].filter(Boolean)));
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
   } else if (ingatkanTf && t.pengajuId === saya.id) {
@@ -2227,7 +2235,7 @@ function renderRekapHarian(bulan) {
             <span class="badge ${k.jenis === 'pemasukan' ? 'badge-pemasukan' : 'badge-pengeluaran'}">${k.jenis === 'pemasukan' ? 'Masuk' : 'Keluar'}</span>
             <span class="rekap-detail-kat">${esc(getKategoriLabel(k.kategori))}</span>
             <span class="badge ${isTunai(k) ? 'badge-tunai' : 'badge-transfer'}">${isTunai(k) ? 'Tunai' : esc(rekeningName(k.rekeningId))}</span>
-            <span class="rekap-detail-ket">${esc(k.ket || '')}${k.inputByNama ? ` <em>· ${esc(k.inputByNama)}</em>` : ''}</span>
+            <span class="rekap-detail-ket">${esc(k.ket || '')}${k.inputByNama ? ` <em>· ${esc(nm(k.inputByNama))}</em>` : ''}</span>
             <strong class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}">${rupiah(k.jumlah)}</strong>
           </div>`).join('') +
         `</div></td></tr>`;
@@ -2681,7 +2689,7 @@ function renderPendingKategori() {
       <td>${tgl}</td>
       <td><strong>${esc(k.label)}</strong>${k.tipe === 'non-bisnis' ? ' <span class="badge badge-non-bisnis">Non-Bisnis</span>' : ''}</td>
       <td>${jenisLabel}</td>
-      <td><span style="font-size:12px;font-weight:600">${esc(k.pengajuNama || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(k.pengajuRole || '')}</span></td>
+      <td><span style="font-size:12px;font-weight:600">${esc(nm(k.pengajuNama) || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(k.pengajuRole || '')}</span></td>
       <td>${k.ket ? esc(k.ket) : '<span class="text-muted-sm">–</span>'}</td>
       <td>
         <button class="btn-sm btn-sm-green" data-approve-kat="${esc(k.key)}">Approve</button>
@@ -2707,7 +2715,7 @@ function renderKategoriAktif() {
     const tipeBadge = k.tipe === 'non-bisnis'
       ? '<span class="badge badge-non-bisnis">Non-Bisnis</span>'
       : '<span class="badge badge-lunas">Bisnis</span>';
-    const sumber = k.isSystem ? '<span class="text-muted-sm">🔒 Sistem</span>' : `<span style="font-size:12px">👤 ${esc(k.pengajuNama || '–')}</span>`;
+    const sumber = k.isSystem ? '<span class="text-muted-sm">🔒 Sistem</span>' : `<span style="font-size:12px">👤 ${esc(nm(k.pengajuNama) || '–')}</span>`;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${esc(k.label)}</strong></td>
@@ -2934,7 +2942,7 @@ function renderPengajuanPending() {
       a.ingatkan   ? `<button class="btn-sm btn-sm-green" data-ingatkan-pgj="${esc(p.id)}" title="Kirim pengingat lewat WhatsApp">📲 Ingatkan</button>` : '',
       a.batal      ? `<button class="btn-sm btn-sm-gray" data-batal-pgj="${esc(p.id)}">Batalkan</button>` : '',
     ].join(' ');
-    const dicek = p.cekNama ? `<br><span style="font-size:10px;color:#9ca3af">dicek ${esc(p.cekNama)}</span>` : '';
+    const dicek = p.cekNama ? `<br><span style="font-size:10px;color:#9ca3af">dicek ${esc(nm(p.cekNama))}</span>` : '';
     const tr = document.createElement('tr');
     if (isNonBisnis) tr.classList.add('row-non-bisnis');
     tr.innerHTML = `
@@ -2944,7 +2952,7 @@ function renderPengajuanPending() {
       <td class="text-red"><strong>${rupiah(p.jumlah)}</strong></td>
       <td>${esc(viaLabel)}</td>
       <td>${esc(p.ket || '–')}</td>
-      <td><span style="font-size:12px;font-weight:600">${esc(p.pengajuNama || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(p.pengajuRole || '')}</span></td>
+      <td><span style="font-size:12px;font-weight:600">${esc(nm(p.pengajuNama) || '–')}</span><br><span style="font-size:10px;color:#9ca3af">${esc(p.pengajuRole || '')}</span></td>
       <td>${PGJ_TAHAP_LABEL[p.status] || ''}${dicek}</td>
       <td class="col-pengajuan-aksi"><div style="display:flex;gap:4px;flex-wrap:wrap">${tombol || '<span class="text-muted-sm">–</span>'}</div></td>
     `;
@@ -2968,10 +2976,10 @@ function renderPengajuanRiwayat() {
     if (p.status === 'done')     statusBadge = '<span class="badge badge-lunas">✓ Disetujui & masuk kas</span>';
     if (p.status === 'rejected') statusBadge = `<span class="badge badge-hutang">Ditolak</span>${p.rejectReason ? `<br><small style="color:#9ca3af">${esc(p.rejectReason)}</small>` : ''}`;
     const jejak = [
-      p.cekNama      ? `Cek: ${esc(p.cekNama)}` : '',
-      p.approvalNama ? `Setuju: ${esc(p.approvalNama)}` : '',
-      p.konfirmasiNama && !p.ditolakNama ? `Kasir: ${esc(p.konfirmasiNama)}` : '',
-      p.ditolakNama  ? `Ditolak: ${esc(p.ditolakNama)}` : '',
+      p.cekNama      ? `Cek: ${esc(nm(p.cekNama))}` : '',
+      p.approvalNama ? `Setuju: ${esc(nm(p.approvalNama))}` : '',
+      p.konfirmasiNama && !p.ditolakNama ? `Kasir: ${esc(nm(p.konfirmasiNama))}` : '',
+      p.ditolakNama  ? `Ditolak: ${esc(nm(p.ditolakNama))}` : '',
     ].filter(Boolean).join('<br>');
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -2979,7 +2987,7 @@ function renderPengajuanRiwayat() {
       <td>${esc(katLabel)}</td>
       <td><strong>${rupiah(p.jumlah)}</strong></td>
       <td>${esc(viaLabel)}</td>
-      <td><span style="font-size:12px">${esc(p.pengajuNama || '–')}</span></td>
+      <td><span style="font-size:12px">${esc(nm(p.pengajuNama) || '–')}</span></td>
       <td>${statusBadge}</td>
       <td><span style="font-size:12px">${jejak || '<span class="text-muted-sm">–</span>'}</span></td>
     `;
@@ -3037,7 +3045,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
   if (!p) return;
   const a = aksiPengajuan(p);
   const saya = { id: currentUser.uid, nama: currentUserData?.nama || '' };
-  const ringkas = `<strong>${esc(getKategoriLabel(p.kategori))}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong> dari ${esc(p.pengajuNama || '-')}`;
+  const ringkas = `<strong>${esc(getKategoriLabel(p.kategori))}</strong> sebesar <strong>${rupiah(p.jumlah)}</strong> dari ${esc(nm(p.pengajuNama) || '-')}`;
 
   if (cekPgj && a.cek) {
     confirmDelete(`Pengajuan ${ringkas} sudah dicek? Teruskan ke Approval.`, async () => {
@@ -3057,9 +3065,9 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
           approvalId: saya.id, approvalNama: saya.nama, approvalAt: serverTimestamp(),
         });
         toast('Pengajuan disetujui & tercatat di kas');
-        tawarkanWA(`Disetujui & tercatat di kas. Kabari ${esc(p.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+        tawarkanWA(`Disetujui & tercatat di kas. Kabari ${esc(nm(p.pengajuNama) || 'pengaju')} lewat WhatsApp?`,
           pesanPengajuan(p, '✅ Pengajuan pengeluaran DISETUJUI', [
-            p.cekNama ? `Dicek: ${p.cekNama}` : null, `Disetujui: ${saya.nama}`,
+            p.cekNama ? `Dicek: ${nm(p.cekNama)}` : null, `Disetujui: ${saya.nama}`,
             'Sudah tercatat sebagai pengeluaran kas, silakan dicairkan.',
           ].filter(Boolean)));
       } catch (err) { toast('Gagal: ' + err.message, 'error'); }
@@ -3080,7 +3088,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
         ditolakId: saya.id, ditolakNama: saya.nama, doneAt: serverTimestamp(),
       });
       toast('Pengajuan ditolak');
-      tawarkanWA(`Pengajuan ditolak. Kabari ${esc(p.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+      tawarkanWA(`Pengajuan ditolak. Kabari ${esc(nm(p.pengajuNama) || 'pengaju')} lewat WhatsApp?`,
         pesanPengajuan(p, '❌ Pengajuan pengeluaran DITOLAK', [
           `Ditolak: ${saya.nama} (tahap ${p.status === 'cek' ? 'Checker' : p.status === 'approval' ? 'Approval' : 'Kasir'})`,
           reason.trim() ? `Alasan: ${reason.trim()}` : null,
@@ -3090,7 +3098,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
     const tahap = p.status === 'cek' ? 'Checker' : 'Approval';
     window.open('https://wa.me/?text=' + encodeURIComponent(
       pesanPengajuan(p, `⏰ Pengingat: pengajuan pengeluaran menunggu ${tahap}`,
-        p.cekNama ? [`Sudah dicek: ${p.cekNama}`] : [])), '_blank');
+        p.cekNama ? [`Sudah dicek: ${nm(p.cekNama)}`] : [])), '_blank');
   } else if (batalPgj && a.batal) {
     confirmDelete(`Batalkan pengajuan ${ringkas}?`, async () => {
       try {
@@ -3771,7 +3779,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
                 : '<span style="background:#dcfce7;color:#166534;font-size:11px;padding:2px 6px;border-radius:4px">✓ Bayar</span>'}
               ${b.ket ? `<span style="color:#6b7280;margin-left:4px">${esc(b.ket)}</span>` : ''}
             </td>
-            <td style="padding:6px 8px;color:#6b7280">${esc(b.inputByNama || b.inputBy || '–')}</td>
+            <td style="padding:6px 8px;color:#6b7280">${esc(nm(b.inputByNama) || b.inputBy || '–')}</td>
           </tr>`;
         }).join('');
       }
