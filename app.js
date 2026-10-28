@@ -262,7 +262,35 @@ function aksiPengajuan(p) {
              || (p.status === 'approval' && isApproverPengajuan() && !milikSaya)
              || (p.status === 'pending' && ['developer', 'kasir'].includes(currentRole)),
     batal:      milikSaya && (p.status === 'cek' || p.status === 'approval'),
+    ingatkan:   milikSaya && (p.status === 'cek' || p.status === 'approval'),
   };
+}
+
+// ── Kabari via WhatsApp (tanpa nomor tersimpan: WhatsApp terbuka, user memilih kontak) ──
+const LK_URL_PENGAJUAN = 'https://adhiitmuh.github.io/laporan-keuangan/#pengajuan';
+
+function pesanPengajuan(p, judul, tambahan = []) {
+  return [
+    judul,
+    '',
+    `Dari: ${p.pengajuNama || '-'}`,
+    `Tanggal: ${p.tgl}`,
+    `Kategori: ${getKategoriLabel(p.kategori)}`,
+    `Jumlah: ${rupiah(p.jumlah)}`,
+    `Via: ${p.via === 'transfer' ? rekeningName(p.rekeningId) : 'Tunai'}`,
+    p.supplierId ? `Supplier: ${supplierName(p.supplierId)}` : null,
+    p.piuNama ? `Peminjam: ${p.piuNama}` : null,
+    p.ket ? `Keterangan: ${p.ket}` : null,
+    ...tambahan,
+    '',
+    LK_URL_PENGAJUAN,
+  ].filter(v => v !== null).join('\n');
+}
+
+function tawarkanWA(teksModal, pesan) {
+  confirmDelete(teksModal, () => {
+    window.open('https://wa.me/?text=' + encodeURIComponent(pesan), '_blank');
+  }, '📲 Kirim WA');
 }
 
 function applyRoleUI(role) {
@@ -2662,6 +2690,7 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
 
   // Owner adalah checker — pengajuan Owner langsung ke tahap approval
   const olehOwner = currentRole === 'developer';
+  const dataPgj = { tgl, kategori, jumlah, supplierId, via, rekeningId, ket, piuNama, pengajuNama: currentUserData?.nama || '' };
   try {
     await addDoc(collection(db, 'lk_pengajuan_kas'), {
       tgl, kategori, jumlah,
@@ -2687,6 +2716,10 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
     document.getElementById('pgj-rekening-wrap').style.display = 'none';
     document.getElementById('pgj-tgl').value = today();
     toast(olehOwner ? 'Pengajuan terkirim, menunggu approval' : 'Pengajuan terkirim ke Checker');
+    tawarkanWA(
+      olehOwner ? 'Pengajuan terkirim ke Approval. Kabari Approver lewat WhatsApp?'
+                : 'Pengajuan terkirim ke Checker. Kabari Checker lewat WhatsApp?',
+      pesanPengajuan(dataPgj, olehOwner ? '📝 Pengajuan pengeluaran menunggu approval' : '📝 Pengajuan pengeluaran baru, mohon dicek'));
   } catch (e) {
     toast('Gagal: ' + e.message, 'error');
   }
@@ -2720,6 +2753,7 @@ function renderPengajuanPending() {
       a.setujui    ? `<button class="btn-sm btn-sm-green" data-setujui-pgj="${esc(p.id)}">✓ Setujui</button>` : '',
       a.konfirmasi ? `<button class="btn-sm btn-sm-green" data-konfirmasi-pgj="${esc(p.id)}">✓ Konfirmasi</button>` : '',
       a.tolak      ? `<button class="btn-sm btn-sm-red" data-tolak-pgj="${esc(p.id)}">Tolak</button>` : '',
+      a.ingatkan   ? `<button class="btn-sm btn-sm-green" data-ingatkan-pgj="${esc(p.id)}" title="Kirim pengingat lewat WhatsApp">📲 Ingatkan</button>` : '',
       a.batal      ? `<button class="btn-sm btn-sm-gray" data-batal-pgj="${esc(p.id)}">Batalkan</button>` : '',
     ].join(' ');
     const dicek = p.cekNama ? `<br><span style="font-size:10px;color:#9ca3af">dicek ${esc(p.cekNama)}</span>` : '';
@@ -2818,8 +2852,8 @@ async function catatPengajuanKeKas(p, statusAwal, tandaSelesai) {
 document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', async e => {
   const btn = e.target.closest('button');
   if (!btn) return;
-  const { cekPgj, setujuiPgj, konfirmasiPgj, tolakPgj, batalPgj } = btn.dataset;
-  const id = cekPgj || setujuiPgj || konfirmasiPgj || tolakPgj || batalPgj;
+  const { cekPgj, setujuiPgj, konfirmasiPgj, tolakPgj, batalPgj, ingatkanPgj } = btn.dataset;
+  const id = cekPgj || setujuiPgj || konfirmasiPgj || tolakPgj || batalPgj || ingatkanPgj;
   if (!id) return;
   const p = pengajuanData.find(x => x.id === id);
   if (!p) return;
@@ -2834,6 +2868,8 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
           status: 'approval', cekId: saya.id, cekNama: saya.nama, cekAt: serverTimestamp(),
         });
         toast('Diteruskan ke Approval');
+        tawarkanWA('Diteruskan ke Approval. Kabari Approver lewat WhatsApp?',
+          pesanPengajuan(p, '📝 Pengajuan pengeluaran menunggu approval', [`Sudah dicek: ${saya.nama}`]));
       } catch (err) { toast('Gagal: ' + err.message, 'error'); }
     }, 'Teruskan ke Approval');
   } else if (setujuiPgj && a.setujui) {
@@ -2843,6 +2879,11 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
           approvalId: saya.id, approvalNama: saya.nama, approvalAt: serverTimestamp(),
         });
         toast('Pengajuan disetujui & tercatat di kas');
+        tawarkanWA(`Disetujui & tercatat di kas. Kabari ${esc(p.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+          pesanPengajuan(p, '✅ Pengajuan pengeluaran DISETUJUI', [
+            p.cekNama ? `Dicek: ${p.cekNama}` : null, `Disetujui: ${saya.nama}`,
+            'Sudah tercatat sebagai pengeluaran kas, silakan dicairkan.',
+          ].filter(Boolean)));
       } catch (err) { toast('Gagal: ' + err.message, 'error'); }
     }, 'Setujui');
   } else if (konfirmasiPgj && a.konfirmasi) {
@@ -2861,7 +2902,17 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
         ditolakId: saya.id, ditolakNama: saya.nama, doneAt: serverTimestamp(),
       });
       toast('Pengajuan ditolak');
+      tawarkanWA(`Pengajuan ditolak. Kabari ${esc(p.pengajuNama || 'pengaju')} lewat WhatsApp?`,
+        pesanPengajuan(p, '❌ Pengajuan pengeluaran DITOLAK', [
+          `Ditolak: ${saya.nama} (tahap ${p.status === 'cek' ? 'Checker' : p.status === 'approval' ? 'Approval' : 'Kasir'})`,
+          reason.trim() ? `Alasan: ${reason.trim()}` : null,
+        ].filter(Boolean)));
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  } else if (ingatkanPgj && a.ingatkan) {
+    const tahap = p.status === 'cek' ? 'Checker' : 'Approval';
+    window.open('https://wa.me/?text=' + encodeURIComponent(
+      pesanPengajuan(p, `⏰ Pengingat: pengajuan pengeluaran menunggu ${tahap}`,
+        p.cekNama ? [`Sudah dicek: ${p.cekNama}`] : [])), '_blank');
   } else if (batalPgj && a.batal) {
     confirmDelete(`Batalkan pengajuan ${ringkas}?`, async () => {
       try {
