@@ -3584,7 +3584,7 @@ function renderPiutang() {
           <button class="btn-sm btn-sm-gray" data-riwayat-piu="${esc(p.id)}">📋 Riwayat</button>
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-blue" data-catat-bayar="${esc(p.id)}" data-nama="${esc(p.nama)}" data-cicilan="${p.cicilan||0}">💰 Catat Bayar</button>` : ''}
           ${!isReadOnly && !lunas ? `<button class="btn-sm btn-sm-orange" data-ambil-lagi="${esc(p.id)}" data-nama="${esc(p.nama)}">💸 Ambil Lagi</button>` : ''}
-          ${!isReadOnly && canModify(p) ? `<button class="btn-sm btn-sm-blue" data-edit-piutang="${esc(p.id)}">✏️ Edit</button>` : ''}
+          ${currentRole === 'developer' ? `<button class="btn-sm btn-sm-blue" data-edit-piutang="${esc(p.id)}">✏️ Edit</button>` : ''}
           ${canRemovePiutang(p) ? `<button class="btn-sm btn-sm-red" data-del-piutang="${esc(p.id)}">Hapus</button>` : ''}
         </div>
       </td>
@@ -3706,7 +3706,7 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
   const sumber = document.getElementById('piu-sumber').value;
   const ket    = document.getElementById('piu-ket').value.trim();
-  if (editingPiuId) {
+  if (editingPiuId && currentRole === 'developer') {
     try { await simpanEditPiutang({ nama, jumlah, tgl, sumber, ket }); }
     catch (e) { toast('Gagal: ' + e.message, 'error'); }
     return;
@@ -3815,7 +3815,7 @@ document.getElementById('tbody-piutang').addEventListener('click', e => {
   const editId = e.target.dataset.editPiutang;
   if (editId) {
     const p = piutangData.find(x => x.id === editId);
-    if (p && canModify(p)) mulaiEditPiutang(p);
+    if (p && currentRole === 'developer') mulaiEditPiutang(p);   // edit piutang khusus Owner
     return;
   }
   const delId = e.target.dataset.delPiutang;
