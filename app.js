@@ -372,8 +372,9 @@ function setUserBadge(data) {
   setEl('user-name', data.nama || data.email || '');
   const badge = document.getElementById('user-role-badge');
   if (badge) {
-    badge.textContent = data.role === 'developer' ? 'owner' : data.role;
+    badge.textContent = data.role;
     badge.className = 'role-badge role-' + data.role;
+    badge.style.display = data.role === 'developer' ? 'none' : '';   // Owner tanpa badge
   }
   const welcomeName = document.getElementById('dash-welcome-name');
   if (welcomeName) welcomeName.textContent = (data.nama || data.email || '').split(' ')[0];
