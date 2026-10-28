@@ -521,6 +521,8 @@ onAuthStateChanged(auth, async (firebaseUser) => {
         return;
       }
       mappedRole = appAccess.role || 'kasir';
+      // Akses penuh (developer) hanya untuk akun Owner portal; data lama 'developer' → pengurus
+      if (mappedRole === 'developer') mappedRole = 'pengurus';
     }
 
     const userData = { ...rawData, role: mappedRole, email: firebaseUser.email, isOwner: rawData.role === 'owner' };
@@ -2453,7 +2455,8 @@ document.getElementById('btn-mode-tahunan').addEventListener('click', () => setL
 // ADMIN — akses user Harmoni ke Laporan Keuangan
 // Akun dibuat di portal Harmoni; di sini hanya atur apps.laporan_keuangan
 // ═══════════════════════════════════════════════════════════════════════════════
-const LK_ROLES = ['kasir', 'pengurus', 'pemilik', 'developer'];
+// 'developer' (akses penuh) tidak bisa diberikan — hanya untuk akun Owner portal
+const LK_ROLES = ['kasir', 'pengurus', 'pemilik'];
 
 function renderUsers() {
   const tbody = document.getElementById('tbody-users');
@@ -2481,7 +2484,7 @@ function renderUsers() {
       <td>${isOwner
         ? '<span class="role-badge role-developer">owner</span>'
         : `<select data-lk-role="${esc(u.id)}" ${akses ? '' : 'disabled'}>
-            ${LK_ROLES.map(r => `<option value="${r}" ${(lk.role || 'kasir') === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${LK_ROLES.map(r => `<option value="${r}" ${((lk.role === 'developer' ? 'pengurus' : lk.role) || 'kasir') === r ? 'selected' : ''}>${r}</option>`).join('')}
           </select>`}
         <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;cursor:pointer">
           <input type="checkbox" data-lk-approver="${esc(u.id)}" ${lk.approver ? 'checked' : ''} ${akses ? '' : 'disabled'}>
