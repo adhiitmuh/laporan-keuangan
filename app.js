@@ -1777,6 +1777,7 @@ function renderLaporan() {
   const namaBulan = new Date(Number(y), Number(m) - 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
 
   let html = `<h2 style="margin-bottom:20px;font-size:17px;font-weight:700">Laporan Keuangan — ${namaBulan}</h2>`;
+  html += `<div class="laporan-section" id="rekap-harian"></div>`;
 
   // 1. Arus Kas
   html += `<div class="laporan-section"><h3>1. Arus Kas</h3>`;
@@ -1883,6 +1884,214 @@ function renderLaporan() {
   html += `</div>`;
 
   output.innerHTML = html;
+  renderRekapHarian(bulan);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Rekap Harian — ringkasan kas per tanggal dalam satu bulan (hanya tampilan)
+// ═══════════════════════════════════════════════════════════════════════════════
+let rekapHanyaPenjualan = false;
+const rekapTerbuka = new Set();   // tanggal yang rinciannya sedang dibuka
+
+// Tanggal lokal (WITA), bukan UTC seperti today()
+const tglLokal = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const isTunai = k => !k.via || k.via === 'tunai';
+
+function hitungRekapHarian(bulan) {
+  const [y, m] = bulan.split('-').map(Number);
+  const hariIni = tglLokal();
+  const jumlahHari = new Date(y, m, 0).getDate();
+
+  let trxBulan = kasirData.filter(k => monthOf(k.tgl) === bulan);
+  if (rekapHanyaPenjualan) trxBulan = trxBulan.filter(k => k.jenis === 'pemasukan' && k.kategori === 'penjualan');
+
+  const hari = [];
+  let akumulasi = 0;
+  for (let d = 1; d <= jumlahHari; d++) {
+    const tgl = `${bulan}-${String(d).padStart(2, '0')}`;
+    if (tgl > hariIni) break;   // jangan tampilkan hari yang belum terjadi
+    const trx = trxBulan.filter(k => k.tgl === tgl);
+    const masuk = trx.filter(k => k.jenis === 'pemasukan');
+    const masukTunai    = masuk.filter(isTunai).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const masukTransfer = masuk.filter(k => !isTunai(k)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const keluar = trx.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const bersih = masukTunai + masukTransfer - keluar;
+    akumulasi += bersih;
+    hari.push({ tgl, d, trx, masukTunai, masukTransfer, totalMasuk: masukTunai + masukTransfer, keluar, bersih, akumulasi });
+  }
+
+  const sum = key => hari.reduce((a, h) => a + h[key], 0);
+  const total = {
+    masukTunai: sum('masukTunai'), masukTransfer: sum('masukTransfer'),
+    totalMasuk: sum('totalMasuk'), keluar: sum('keluar'), bersih: sum('bersih'),
+  };
+  const hariAda = hari.filter(h => h.trx.length);
+  const tertinggi = hari.reduce((best, h) => (!best || h.totalMasuk > best.totalMasuk ? h : best), null);
+  return {
+    y, m, hari, total, trxBulan,
+    rataRata: hari.length ? Math.round(total.totalMasuk / hari.length) : 0,
+    hariKosong: hari.length - hariAda.length,
+    tertinggi: tertinggi && tertinggi.totalMasuk > 0 ? tertinggi : null,
+  };
+}
+
+function labelTanggal(y, m, d, opts = { weekday: 'short', day: 'numeric', month: 'short' }) {
+  return new Date(y, m - 1, d).toLocaleDateString('id-ID', opts);
+}
+
+function renderRekapHarian(bulan) {
+  const wrap = document.getElementById('rekap-harian');
+  if (!wrap) return;
+  const r = hitungRekapHarian(bulan);
+  const jual = rekapHanyaPenjualan;
+  const angka = (n, cls = '') => n ? `<span class="${cls}">${rupiah(n)}</span>` : '<span class="rekap-nol">–</span>';
+  const bertanda = n => n === 0 ? '<span class="rekap-nol">–</span>'
+    : `<span class="${n > 0 ? 'text-green' : 'text-red'}">${n > 0 ? '+' : '−'}${rupiah(Math.abs(n))}</span>`;
+  const kolom = jual ? 6 : 8;
+
+  let html = `
+    <div class="rekap-head">
+      <h3>Rekap Harian</h3>
+      <div class="rekap-actions">
+        <div class="toggle-group">
+          <button type="button" class="toggle-btn ${jual ? '' : 'active'}" data-rekap-mode="semua">Semua Kas</button>
+          <button type="button" class="toggle-btn ${jual ? 'active' : ''}" data-rekap-mode="penjualan">Hanya Penjualan</button>
+        </div>
+        <button type="button" class="btn-outline" id="btn-rekap-export">⬇️ Export Excel</button>
+      </div>
+    </div>`;
+
+  if (!r.hari.length) {
+    wrap.innerHTML = html + '<p class="empty-note">Bulan ini belum dimulai.</p>';
+    pasangEventRekap(wrap, bulan);
+    return;
+  }
+
+  html += `
+    <div class="rekap-ringkas">
+      <div><span>${jual ? 'Total penjualan' : 'Total pemasukan'}</span><strong class="text-green">${rupiah(r.total.totalMasuk)}</strong></div>
+      <div><span>Rata-rata per hari</span><strong>${rupiah(r.rataRata)}</strong></div>
+      <div><span>Hari tertinggi</span><strong>${r.tertinggi ? `${labelTanggal(r.y, r.m, r.tertinggi.d, { day: 'numeric', month: 'short' })} · ${rupiah(r.tertinggi.totalMasuk)}` : '–'}</strong></div>
+      <div><span>Hari tanpa transaksi</span><strong class="${r.hariKosong ? 'text-amber' : ''}">${r.hariKosong} hari</strong></div>
+    </div>
+    <div class="table-wrap">
+      <table class="rekap-tbl">
+        <thead><tr>
+          <th>Tanggal</th>
+          <th class="num">Tunai</th>
+          <th class="num">Transfer</th>
+          <th class="num">${jual ? 'Total Penjualan' : 'Total Masuk'}</th>
+          ${jual ? '' : '<th class="num">Keluar</th><th class="num">Bersih</th>'}
+          <th class="num">Akumulasi</th>
+          <th></th>
+        </tr></thead>
+        <tbody>`;
+
+  r.hari.forEach(h => {
+    const ada = h.trx.length > 0;
+    const buka = ada && rekapTerbuka.has(h.tgl);
+    const minggu = new Date(r.y, r.m - 1, h.d).getDay() === 0;
+    html += `
+      <tr class="rekap-row ${ada ? 'rekap-klik' : 'rekap-kosong'} ${minggu ? 'rekap-minggu' : ''}" ${ada ? `data-rekap-tgl="${h.tgl}"` : ''}>
+        <td>${esc(labelTanggal(r.y, r.m, h.d))}</td>
+        <td class="num">${angka(h.masukTunai)}</td>
+        <td class="num">${angka(h.masukTransfer)}</td>
+        <td class="num"><strong>${angka(h.totalMasuk, 'text-green')}</strong></td>
+        ${jual ? '' : `<td class="num">${angka(h.keluar, 'text-red')}</td><td class="num">${bertanda(h.bersih)}</td>`}
+        <td class="num rekap-akum">${rupiah(h.akumulasi)}</td>
+        <td class="rekap-chev">${ada ? `<span class="${buka ? 'buka' : ''}">▸</span>` : ''}</td>
+      </tr>`;
+    if (buka) {
+      const rincian = [...h.trx].sort((a, b) =>
+        (a.jenis === b.jenis ? 0 : a.jenis === 'pemasukan' ? -1 : 1) || Number(b.jumlah || 0) - Number(a.jumlah || 0));
+      html += `<tr class="rekap-detail"><td colspan="${kolom}"><div class="rekap-detail-list">` +
+        rincian.map(k => `
+          <div class="rekap-detail-item">
+            <span class="badge ${k.jenis === 'pemasukan' ? 'badge-pemasukan' : 'badge-pengeluaran'}">${k.jenis === 'pemasukan' ? 'Masuk' : 'Keluar'}</span>
+            <span class="rekap-detail-kat">${esc(getKategoriLabel(k.kategori))}</span>
+            <span class="badge ${isTunai(k) ? 'badge-tunai' : 'badge-transfer'}">${isTunai(k) ? 'Tunai' : esc(rekeningName(k.rekeningId))}</span>
+            <span class="rekap-detail-ket">${esc(k.ket || '')}${k.inputByNama ? ` <em>· ${esc(k.inputByNama)}</em>` : ''}</span>
+            <strong class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}">${rupiah(k.jumlah)}</strong>
+          </div>`).join('') +
+        `</div></td></tr>`;
+    }
+  });
+
+  html += `
+        </tbody>
+        <tfoot><tr>
+          <td class="tfoot-label" style="text-align:left">Total ${esc(labelTanggal(r.y, r.m, 1, { month: 'short' }))}</td>
+          <td class="tfoot-value num">${rupiah(r.total.masukTunai)}</td>
+          <td class="tfoot-value num">${rupiah(r.total.masukTransfer)}</td>
+          <td class="tfoot-value num text-green">${rupiah(r.total.totalMasuk)}</td>
+          ${jual ? '' : `<td class="tfoot-value num text-red">${rupiah(r.total.keluar)}</td><td class="tfoot-value num">${bertanda(r.total.bersih)}</td>`}
+          <td class="tfoot-value"></td><td class="tfoot-value"></td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <p class="rekap-catatan">Ketuk tanggal untuk melihat rincian. Akumulasi = jumlah bersih sejak tanggal 1 bulan ini (bukan saldo kas keseluruhan).${jual ? '' : ' Pengeluaran termasuk non-bisnis.'}</p>`;
+
+  wrap.innerHTML = html;
+  pasangEventRekap(wrap, bulan);
+}
+
+function pasangEventRekap(wrap, bulan) {
+  wrap.onclick = e => {
+    const mode = e.target.closest('[data-rekap-mode]')?.dataset.rekapMode;
+    if (mode) {
+      rekapHanyaPenjualan = mode === 'penjualan';
+      renderRekapHarian(bulan);
+      return;
+    }
+    if (e.target.closest('#btn-rekap-export')) {
+      exportRekapHarian(bulan);
+      return;
+    }
+    const tgl = e.target.closest('[data-rekap-tgl]')?.dataset.rekapTgl;
+    if (tgl) {
+      if (rekapTerbuka.has(tgl)) rekapTerbuka.delete(tgl); else rekapTerbuka.add(tgl);
+      renderRekapHarian(bulan);
+    }
+  };
+}
+
+function exportRekapHarian(bulan) {
+  if (typeof XLSX === 'undefined') { toast('Library Excel belum termuat, coba muat ulang halaman', 'error'); return; }
+  const r = hitungRekapHarian(bulan);
+  const jual = rekapHanyaPenjualan;
+  const kolomTotal = jual ? 'Total Penjualan' : 'Total Masuk';
+  const wb = XLSX.utils.book_new();
+
+  const rows = r.hari.map(h => {
+    const row = {
+      Tanggal: labelTanggal(r.y, r.m, h.d, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+      Tunai: h.masukTunai,
+      Transfer: h.masukTransfer,
+      [kolomTotal]: h.totalMasuk,
+    };
+    if (!jual) { row.Keluar = h.keluar; row.Bersih = h.bersih; }
+    row.Akumulasi = h.akumulasi;
+    row['Jumlah Transaksi'] = h.trx.length;
+    return row;
+  });
+  const totalRow = { Tanggal: 'TOTAL', Tunai: r.total.masukTunai, Transfer: r.total.masukTransfer, [kolomTotal]: r.total.totalMasuk };
+  if (!jual) { totalRow.Keluar = r.total.keluar; totalRow.Bersih = r.total.bersih; }
+  rows.push({}, totalRow, { Tanggal: 'Rata-rata per hari', [kolomTotal]: r.rataRata });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Rekap Harian');
+
+  const rincian = [...r.trxBulan].sort((a, b) => String(a.tgl).localeCompare(String(b.tgl))).map(k => ({
+    Tanggal: k.tgl,
+    Jenis: k.jenis === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran',
+    Kategori: getKategoriLabel(k.kategori),
+    Via: isTunai(k) ? 'Tunai' : rekeningName(k.rekeningId),
+    Jumlah: Number(k.jumlah || 0),
+    Keterangan: k.ket || '',
+    'Diinput Oleh': k.inputByNama || '',
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rincian), 'Rincian Transaksi');
+
+  XLSX.writeFile(wb, `Rekap_Harian_${bulan}${jual ? '_penjualan' : ''}.xlsx`);
 }
 
 function renderLaporanTahunan(output) {

@@ -544,3 +544,38 @@ tbody tr:hover { background: var(--brand-tint); }
   .login-brand h1 { font-size: 15px; }
   .page-title { font-size: 18px; }
 }
+
+/* ═══════════════════════════════════════════════════════
+   REKAP HARIAN (halaman Laporan)
+═══════════════════════════════════════════════════════ */
+.rekap-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  border-bottom: 2px solid var(--brand-light); padding-bottom: 8px; margin-bottom: 14px; }
+.rekap-head h3 { border: none; margin: 0; padding: 0; }
+.rekap-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rekap-ringkas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.rekap-ringkas > div { background: var(--brand-tint); border: 1px solid var(--gray-border); border-radius: var(--radius);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.rekap-ringkas span { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 600; }
+.rekap-ringkas strong { font-size: 15px; font-variant-numeric: tabular-nums; }
+.rekap-tbl .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rekap-tbl td { padding: 8px 12px; }
+.rekap-klik { cursor: pointer; }
+.rekap-kosong td { color: var(--text-muted); background: #fafafa; }
+.rekap-minggu td:first-child { color: var(--red); }
+.rekap-nol { color: #cbd5e1; }
+.rekap-akum { color: var(--text-muted); font-size: 12px; }
+.rekap-chev { width: 24px; text-align: center; color: var(--text-muted); }
+.rekap-chev span { display: inline-block; transition: transform .15s; }
+.rekap-chev span.buka { transform: rotate(90deg); color: var(--brand); }
+.rekap-detail td { background: var(--brand-tint); padding: 6px 12px 10px 28px; }
+.rekap-detail-list { display: flex; flex-direction: column; gap: 6px; }
+.rekap-detail-item { display: grid; grid-template-columns: auto minmax(110px, auto) auto 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+.rekap-detail-kat { font-weight: 600; }
+.rekap-detail-ket { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+.rekap-detail-item strong { font-variant-numeric: tabular-nums; }
+.rekap-catatan { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+@media (max-width: 720px) {
+  .rekap-ringkas { grid-template-columns: repeat(2, 1fr); }
+  .rekap-detail-item { grid-template-columns: auto 1fr auto; }
+  .rekap-detail-item .badge-tunai, .rekap-detail-item .badge-transfer, .rekap-detail-ket { display: none; }
+}
