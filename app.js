@@ -1631,7 +1631,7 @@ document.getElementById('kas-kategori').addEventListener('change', function () {
 
 document.getElementById('kas-via').addEventListener('change', function () {
   document.getElementById('kas-rekening-wrap').style.display =
-    this.value === 'transfer' ? '' : 'none';
+    this.value !== 'tunai' ? '' : 'none';
 });
 
 function renderKasir(filter = kasirFilter) {
@@ -1665,7 +1665,7 @@ function renderKasir(filter = kasirFilter) {
         <td>${esc(katLabel)}${nbTag}</td>
         <td>${k.supplierId ? esc(supplierName(k.supplierId)) : '-'}</td>
         <td class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}"><strong>${rupiah(k.jumlah)}</strong></td>
-        <td>${!k.via || k.via === 'tunai' ? 'Tunai' : esc(rekeningName(k.rekeningId))}</td>
+        <td>${esc(labelVia(k))}</td>
         <td>${esc(k.ket || '-')}</td>
         <td>${inputByBadge(k)}</td>
         <td style="${isKasirLihatSaja() ? 'display:none' : ''}">
@@ -1781,7 +1781,7 @@ function getKasirFormData() {
   const jumlah   = parseRibuan(document.getElementById('kas-jumlah').value);
   const supplierId = kategori === 'bayar-supplier' ? document.getElementById('kas-supplier').value : null;
   const via        = document.getElementById('kas-via').value;
-  const rekeningId = via === 'transfer' ? document.getElementById('kas-rekening').value : null;
+  const rekeningId = via !== 'tunai' ? document.getElementById('kas-rekening').value : null;   // transfer & QRIS masuk ke rekening
   const ket        = document.getElementById('kas-ket').value.trim();
   const piuNama    = kategori === 'piutang' ? document.getElementById('kas-piu-nama').value.trim() : '';
   const cicilan    = kategori === 'piutang' ? (parseRibuan(document.getElementById('kas-piu-cicilan').value) || 0) : 0;
@@ -1793,7 +1793,7 @@ function validateKasirData(d) {
   if (!d.tgl || !d.jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return false; }
   if (d.kategori === 'bayar-supplier' && !d.supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return false; }
   if (d.kategori === 'piutang' && !d.piuNama) { toast('Nama peminjam wajib diisi', 'error'); return false; }
-  if (d.via === 'transfer' && !d.rekeningId) { toast('Pilih rekening untuk transfer', 'error'); return false; }
+  if (d.via !== 'tunai' && !d.rekeningId) { toast(d.via === 'qris' ? 'Pilih rekening penampung QRIS' : 'Pilih rekening untuk transfer', 'error'); return false; }
   return true;
 }
 
@@ -1897,8 +1897,8 @@ document.getElementById('tbody-kasir').addEventListener('click', e => {
     document.getElementById('kas-piutang-wrap').style.display  = 'none';
     document.getElementById('kas-supplier').value = k.supplierId || '';
     document.getElementById('kas-jumlah').value   = formatRibuan(k.jumlah);
-    document.getElementById('kas-via').value      = k.via === 'transfer' ? 'transfer' : 'tunai';
-    document.getElementById('kas-rekening-wrap').style.display = k.via === 'transfer' ? '' : 'none';
+    document.getElementById('kas-via').value      = ['transfer', 'qris'].includes(k.via) ? k.via : 'tunai';
+    document.getElementById('kas-rekening-wrap').style.display = isTunai(k) ? 'none' : '';
     document.getElementById('kas-rekening').value = k.rekeningId || '';
     document.getElementById('kas-ket').value      = k.ket || '';
     setEl('kas-form-title', 'Edit Transaksi');
@@ -2122,6 +2122,8 @@ const rekapTerbuka = new Set();   // tanggal yang rinciannya sedang dibuka
 const tglLokal = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const isTunai = k => !k.via || k.via === 'tunai';
+const isQris  = k => k.via === 'qris';
+const labelVia = k => isTunai(k) ? 'Tunai' : (isQris(k) ? 'QRIS · ' : '') + rekeningName(k.rekeningId);
 
 function hitungRekapHarian(bulan) {
   const [y, m] = bulan.split('-').map(Number);
@@ -2139,16 +2141,18 @@ function hitungRekapHarian(bulan) {
     const trx = trxBulan.filter(k => k.tgl === tgl);
     const masuk = trx.filter(k => k.jenis === 'pemasukan');
     const masukTunai    = masuk.filter(isTunai).reduce((a, k) => a + Number(k.jumlah || 0), 0);
-    const masukTransfer = masuk.filter(k => !isTunai(k)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const masukTransfer = masuk.filter(k => !isTunai(k) && !isQris(k)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const masukQris     = masuk.filter(isQris).reduce((a, k) => a + Number(k.jumlah || 0), 0);
     const keluar = trx.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
-    const bersih = masukTunai + masukTransfer - keluar;
+    const totalMasuk = masukTunai + masukTransfer + masukQris;
+    const bersih = totalMasuk - keluar;
     akumulasi += bersih;
-    hari.push({ tgl, d, trx, masukTunai, masukTransfer, totalMasuk: masukTunai + masukTransfer, keluar, bersih, akumulasi });
+    hari.push({ tgl, d, trx, masukTunai, masukTransfer, masukQris, totalMasuk, keluar, bersih, akumulasi });
   }
 
   const sum = key => hari.reduce((a, h) => a + h[key], 0);
   const total = {
-    masukTunai: sum('masukTunai'), masukTransfer: sum('masukTransfer'),
+    masukTunai: sum('masukTunai'), masukTransfer: sum('masukTransfer'), masukQris: sum('masukQris'),
     totalMasuk: sum('totalMasuk'), keluar: sum('keluar'), bersih: sum('bersih'),
   };
   const hariAda = hari.filter(h => h.trx.length);
@@ -2173,7 +2177,7 @@ function renderRekapHarian(bulan) {
   const angka = (n, cls = '') => n ? `<span class="${cls}">${rupiah(n)}</span>` : '<span class="rekap-nol">–</span>';
   const bertanda = n => n === 0 ? '<span class="rekap-nol">–</span>'
     : `<span class="${n > 0 ? 'text-green' : 'text-red'}">${n > 0 ? '+' : '−'}${rupiah(Math.abs(n))}</span>`;
-  const kolom = jual ? 6 : 8;
+  const kolom = jual ? 7 : 9;
 
   let html = `
     <div class="rekap-head">
@@ -2206,6 +2210,7 @@ function renderRekapHarian(bulan) {
           <th>Tanggal</th>
           <th class="num">Tunai</th>
           <th class="num">Transfer</th>
+          <th class="num">QRIS</th>
           <th class="num">${jual ? 'Total Penjualan' : 'Total Masuk'}</th>
           ${jual ? '' : '<th class="num">Keluar</th><th class="num">Bersih</th>'}
           <th class="num">Akumulasi</th>
@@ -2222,6 +2227,7 @@ function renderRekapHarian(bulan) {
         <td>${esc(labelTanggal(r.y, r.m, h.d))}</td>
         <td class="num">${angka(h.masukTunai)}</td>
         <td class="num">${angka(h.masukTransfer)}</td>
+        <td class="num">${angka(h.masukQris)}</td>
         <td class="num"><strong>${angka(h.totalMasuk, 'text-green')}</strong></td>
         ${jual ? '' : `<td class="num">${angka(h.keluar, 'text-red')}</td><td class="num">${bertanda(h.bersih)}</td>`}
         <td class="num rekap-akum">${rupiah(h.akumulasi)}</td>
@@ -2235,7 +2241,7 @@ function renderRekapHarian(bulan) {
           <div class="rekap-detail-item">
             <span class="badge ${k.jenis === 'pemasukan' ? 'badge-pemasukan' : 'badge-pengeluaran'}">${k.jenis === 'pemasukan' ? 'Masuk' : 'Keluar'}</span>
             <span class="rekap-detail-kat">${esc(getKategoriLabel(k.kategori))}</span>
-            <span class="badge ${isTunai(k) ? 'badge-tunai' : 'badge-transfer'}">${isTunai(k) ? 'Tunai' : esc(rekeningName(k.rekeningId))}</span>
+            <span class="badge ${isTunai(k) ? 'badge-tunai' : 'badge-transfer'}">${esc(labelVia(k))}</span>
             <span class="rekap-detail-ket">${esc(k.ket || '')}${k.inputByNama ? ` <em>· ${esc(nm(k.inputByNama))}</em>` : ''}</span>
             <strong class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}">${rupiah(k.jumlah)}</strong>
           </div>`).join('') +
@@ -2249,6 +2255,7 @@ function renderRekapHarian(bulan) {
           <td class="tfoot-label" style="text-align:left">Total ${esc(labelTanggal(r.y, r.m, 1, { month: 'short' }))}</td>
           <td class="tfoot-value num">${rupiah(r.total.masukTunai)}</td>
           <td class="tfoot-value num">${rupiah(r.total.masukTransfer)}</td>
+          <td class="tfoot-value num">${rupiah(r.total.masukQris)}</td>
           <td class="tfoot-value num text-green">${rupiah(r.total.totalMasuk)}</td>
           ${jual ? '' : `<td class="tfoot-value num text-red">${rupiah(r.total.keluar)}</td><td class="tfoot-value num">${bertanda(r.total.bersih)}</td>`}
           <td class="tfoot-value"></td><td class="tfoot-value"></td>
@@ -2293,6 +2300,7 @@ function exportRekapHarian(bulan) {
       Tanggal: labelTanggal(r.y, r.m, h.d, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
       Tunai: h.masukTunai,
       Transfer: h.masukTransfer,
+      QRIS: h.masukQris,
       [kolomTotal]: h.totalMasuk,
     };
     if (!jual) { row.Keluar = h.keluar; row.Bersih = h.bersih; }
@@ -2300,7 +2308,7 @@ function exportRekapHarian(bulan) {
     row['Jumlah Transaksi'] = h.trx.length;
     return row;
   });
-  const totalRow = { Tanggal: 'TOTAL', Tunai: r.total.masukTunai, Transfer: r.total.masukTransfer, [kolomTotal]: r.total.totalMasuk };
+  const totalRow = { Tanggal: 'TOTAL', Tunai: r.total.masukTunai, Transfer: r.total.masukTransfer, QRIS: r.total.masukQris, [kolomTotal]: r.total.totalMasuk };
   if (!jual) { totalRow.Keluar = r.total.keluar; totalRow.Bersih = r.total.bersih; }
   rows.push({}, totalRow, { Tanggal: 'Rata-rata per hari', [kolomTotal]: r.rataRata });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Rekap Harian');
@@ -2309,7 +2317,7 @@ function exportRekapHarian(bulan) {
     Tanggal: k.tgl,
     Jenis: k.jenis === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran',
     Kategori: getKategoriLabel(k.kategori),
-    Via: isTunai(k) ? 'Tunai' : rekeningName(k.rekeningId),
+    Via: labelVia(k),
     Jumlah: Number(k.jumlah || 0),
     Keterangan: k.ket || '',
     'Diinput Oleh': k.inputByNama || '',
