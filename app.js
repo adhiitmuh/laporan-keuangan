@@ -1699,6 +1699,7 @@ function renderKasir(filter = kasirFilter) {
             ${canRemove(k) && !(k.sumberPiutangId && !k.sumberPiutangBayarId) && !k.sumberTutupKasir
               ? `<button class="btn-sm btn-sm-red" data-del-kas="${esc(k.id)}">Hapus</button>` : ''}
             ${k.sumberTutupKasir ? `<span class="text-muted-sm" title="Ubah lewat halaman Tutup Kasir">🧾 Tutup Kasir</span>` : ''}
+            ${bisaGantiSumber(k) ? `<button class="btn-sm btn-sm-blue" data-sumber-kas="${esc(k.id)}" title="Ganti sumber dana (tunai/rekening)">🔁 Sumber</button>` : ''}
           </div>
         </td>
       `;
@@ -1908,7 +1909,33 @@ document.getElementById('btn-filter-kas').addEventListener('click', () => {
   });
 });
 
+// Entri otomatis (bayar supplier, pengajuan) tidak bisa diedit penuh supaya tetap sesuai sumbernya,
+// tapi Owner bisa membetulkan sumber dananya bila salah pilih rekening.
+const bisaGantiSumber = k => currentRole === 'developer' && !!(k.autoFromBeli || k.sumberPengajuanId)
+  && !k.sumberPiutangId && !k.sumberTutupKasir;
 document.getElementById('tbody-kasir').addEventListener('click', e => {
+  const sumberId = e.target.closest?.('[data-sumber-kas]')?.dataset.sumberKas;
+  if (sumberId) {
+    const k = kasirData.find(x => x.id === sumberId);
+    if (!k || !bisaGantiSumber(k)) return;
+    const sekarang = isTunai(k) ? 'tunai' : k.rekeningId;
+    const opsi = [['tunai', 'Tunai'], ...rekening.map(r => [r.id, `${r.nama} (${r.bank})`])]
+      .map(([v, l]) => `<option value="${esc(v)}" ${v === sekarang ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    confirmDelete(`<b>Ganti sumber dana</b><br><small style="color:var(--text-muted)">${esc(k.tgl)} · ${esc(getKategoriLabel(k.kategori))} · ${rupiah(k.jumlah)}${k.supplierId ? ' · ' + esc(supplierName(k.supplierId)) : ''}<br>Sekarang: ${esc(labelVia(k))}</small>
+      <div style="margin-top:10px"><select id="ganti-sumber-sel" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #e5e7eb;font:inherit">${opsi}</select></div>`, async () => {
+      const v = document.getElementById('ganti-sumber-sel')?.value;
+      if (!v || v === sekarang) return;
+      const viaBaru = v === 'tunai' ? 'tunai' : (k.via === 'qris' ? 'qris' : 'transfer');
+      try {
+        await updateDoc(doc(db, 'lk_kasir', k.id), {
+          via: viaBaru, rekeningId: v === 'tunai' ? null : v,
+          sumberDiubahDari: labelVia(k), sumberDiubahOleh: currentUserData?.nama || currentUser?.email || '', sumberDiubahAt: serverTimestamp(),
+        });
+        toast(`Sumber dana diganti ke ${v === 'tunai' ? 'Tunai' : rekeningName(v)}`);
+      } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+    }, 'Simpan');
+    return;
+  }
   if (isKasirLihatSaja()) return;
   const editId = e.target.dataset.editKas;
   if (editId) {
