@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Laporan Keuangan Toko Harmonis Sentral</title>
-  <link rel="stylesheet" href="style.css?v=20261028d" />
+  <link rel="stylesheet" href="style.css?v=20261105a" />
 </head>
 <body>
 
@@ -57,6 +57,7 @@
         <button class="nav-btn active" data-page="dashboard">📊 Dashboard</button>
         <button class="nav-btn nav-pembelian" data-page="pembelian">🛒 Pembelian</button>
         <button class="nav-btn nav-kasir" data-page="kasir">💰 Kasir</button>
+        <button class="nav-btn nav-tutupkasir" data-page="tutupkasir">🧾 Tutup Kasir <span id="badge-tk-menunggu" class="badge badge-hutang hidden" style="margin-left:4px"></span></button>
         <button class="nav-btn nav-pengajuan" data-page="pengajuan">📝 Pengajuan</button>
         <button class="nav-btn nav-supplier" data-page="supplier">🏭 Supplier</button>
         <button class="nav-btn nav-po" data-page="po">📋 PO &amp; Budget</button>
@@ -402,6 +403,87 @@
                 <td colspan="4"></td>
               </tr>
             </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─── TUTUP KASIR HARIAN ─────────────────────── -->
+      <section id="page-tutupkasir" class="page">
+        <h2 class="page-title">🧾 Tutup Kasir Harian</h2>
+        <p class="tk-intro">Salin angka dari struk <b>Penutupan Penjualan</b> mesin kasir, rincian kas keluar, setoran, dan uang yang tersisa di laci. Penjualan, pengeluaran laci &amp; setoran otomatis tercatat di buku kas.</p>
+
+        <div id="tk-menunggu-wrap"></div>
+
+        <div class="form-card" id="form-tk-wrap">
+          <h3 id="tk-form-title">Tutup Kasir</h3>
+          <div id="tk-dikembalikan-note"></div>
+          <div class="form-grid">
+            <div class="form-group"><label>Tanggal Jual</label><input type="date" id="tk-tgl" /></div>
+            <div class="form-group"><label>Modal Awal Laci (Rp)</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-modal" class="tk-angka" placeholder="0" /><small id="tk-modal-info" class="tk-hint"></small></div>
+          </div>
+
+          <div class="tk-blok">
+            <div class="tk-blok-judul">1 · Angka dari struk Penutupan Penjualan</div>
+            <div class="form-grid">
+              <div class="form-group"><label>Resi (jumlah transaksi)</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-resi" placeholder="0" /></div>
+              <div class="form-group"><label>Total Penjualan</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-total" class="tk-angka" placeholder="0" /></div>
+              <div class="form-group"><label>Diskon Item</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-diskon" class="tk-angka" placeholder="0" /></div>
+              <div class="form-group"><label>Penjualan Tunai</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-tunai" class="tk-angka" placeholder="0" /></div>
+              <div class="form-group"><label>Pengembalian + Pembatalan Tunai</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-retur" class="tk-angka" placeholder="0" /></div>
+            </div>
+            <div class="tk-sub">QRIS &amp; Transfer (langsung masuk rekening)</div>
+            <div id="tk-nontunai"></div>
+            <button type="button" class="btn-sm btn-sm-gray" id="btn-tk-tambah-nontunai">+ Metode lain</button>
+            <div id="tk-cek-total" class="tk-cek"></div>
+          </div>
+
+          <div class="tk-blok">
+            <div class="tk-blok-judul">2 · Kas Masuk-Keluar (rincian pengeluaran dari laci)</div>
+            <div class="form-grid">
+              <div class="form-group"><label>Kas Masuk-Keluar di struk</label><input type="text" inputmode="text" autocomplete="off" id="tk-kmk" placeholder="cth: -1.409.500" /><small class="tk-hint">Tulis persis seperti di struk, termasuk tanda minus.</small></div>
+            </div>
+            <div id="tk-rincian"></div>
+            <button type="button" class="btn-sm btn-sm-gray" id="btn-tk-tambah-rincian">+ Tambah rincian</button>
+            <datalist id="tk-ket-list"></datalist>
+            <div id="tk-cek-kmk" class="tk-cek"></div>
+            <div class="form-group" id="tk-alasan-kmk-wrap" style="display:none;margin-top:8px"><label>Alasan rincian beda dengan struk <span style="color:#ef4444">*</span></label><input type="text" id="tk-alasan-kmk" placeholder="Jelaskan kenapa jumlahnya beda" /></div>
+          </div>
+
+          <div class="tk-blok">
+            <div class="tk-blok-judul">3 · Setoran &amp; hitung laci</div>
+            <div class="form-grid">
+              <div class="form-group"><label>Setoran tunai ke pengurus (UL)</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-setoran" class="tk-angka" placeholder="0" /></div>
+              <div class="form-group"><label>Uang fisik tersisa di laci</label><input type="text" inputmode="numeric" autocomplete="off" id="tk-fisik" class="tk-angka" placeholder="hitung uangnya" /></div>
+            </div>
+            <div id="tk-hitung" class="tk-hitung"></div>
+            <div class="form-group" id="tk-alasan-selisih-wrap" style="display:none;margin-top:8px"><label>Alasan selisih <span style="color:#ef4444">*</span></label><input type="text" id="tk-alasan-selisih" placeholder="cth: kembalian kurang, belum ketemu" /></div>
+          </div>
+
+          <div class="tk-blok">
+            <div class="tk-blok-judul">4 · Foto struk (bukti)</div>
+            <input type="file" id="tk-foto" accept="image/*" />
+            <div id="tk-foto-lama" class="tk-hint"></div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+            <button class="btn-primary" id="btn-simpan-tk">💾 Simpan Tutup Kasir</button>
+            <button class="btn-outline" id="btn-batal-tk" style="display:none">Batal Edit</button>
+          </div>
+        </div>
+
+        <h3 class="section-title">Laporan Kasir</h3>
+        <div class="filter-bar">
+          <input type="month" id="filter-tk-bulan" />
+          <button class="btn-outline" id="btn-export-tk">⬇️ Excel</button>
+        </div>
+        <div id="tk-ringkasan" class="card-grid" style="margin-bottom:14px"></div>
+        <div class="table-wrap">
+          <table class="tbl" id="tbl-tk">
+            <thead><tr>
+              <th>Tanggal</th><th>Resi</th><th>Penjualan</th><th>Tunai</th><th>QRIS/TF</th><th>Keluar Laci</th><th>Setoran</th><th>Sisa Laci</th><th>Selisih</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody id="tbody-tk"></tbody>
+            <tfoot id="tfoot-tk"></tfoot>
           </table>
         </div>
       </section>
@@ -1227,6 +1309,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261031a"></script>
+  <script type="module" src="app.js?v=20261105a"></script>
 </body>
 </html>

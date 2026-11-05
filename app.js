@@ -240,10 +240,10 @@ function showScreen(name) {
 // Role-based nav / UI
 // ═══════════════════════════════════════════════════════════════════════════════
 const ROLE_PAGES = {
-  developer: ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
-  pemilik:   ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'rekening', 'piutang', 'transfer', 'laporan'],
-  pengurus:  ['dashboard', 'pembelian', 'kasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
-  kasir:     ['kasir', 'pengajuan', 'pembelian'],
+  developer: ['dashboard', 'pembelian', 'kasir', 'tutupkasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan', 'admin'],
+  pemilik:   ['dashboard', 'pembelian', 'kasir', 'tutupkasir', 'pengajuan', 'rekening', 'piutang', 'transfer', 'laporan'],
+  pengurus:  ['dashboard', 'pembelian', 'kasir', 'tutupkasir', 'pengajuan', 'supplier', 'po', 'rekening', 'piutang', 'transfer', 'laporan'],
+  kasir:     ['tutupkasir', 'kasir', 'pengajuan', 'pembelian'],
 };
 
 // Halaman Kasir untuk pengurus hanya untuk dilihat — input/edit/hapus kas oleh kasir & admin.
@@ -403,6 +403,7 @@ function navigateTo(page) {
   if (page === 'admin')     renderUsers();
   if (page === 'rekening')  renderRekening();
   if (page === 'piutang')   renderPiutang();
+  if (page === 'tutupkasir') renderTutupKasir();
   if (page === 'transfer')  { renderMutasi(); renderPengajuanTransfer(); }
   if (page === 'pengajuan') {
     populatePengajuanKategoriSelect();
@@ -594,6 +595,14 @@ function startListeners() {
     renderDashboard();
   }));
 
+  // tutup kasir harian
+  unsubs.push(onSnap(query(collection(db, 'lk_tutup_kasir'), orderBy('tgl', 'desc')), snap => {
+    tkData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderTutupKasir();
+    tkSegarkanForm();
+    renderDashboard();
+  }));
+
   // users portal Harmoni — rules hanya izinkan owner membaca semua user
   if (currentUserData?.isOwner) {
     unsubs.push(onSnap(collection(authDb, 'users'), snap => {
@@ -616,6 +625,7 @@ function startListeners() {
     populateRekeningSelects();
     renderRekening();
     renderDashboard();
+    tkSegarkanForm();
   }));
 
   // purchase orders
@@ -676,6 +686,7 @@ function startListeners() {
     populateKategoriSelect();
     populatePengajuanKategoriSelect();
     renderPendingKategori();
+    tkSegarkanForm();
     renderKategoriAktif();
     updatePendingKategoriBadge();
     // Re-render halaman yang bergantung ke label kategori
@@ -848,7 +859,8 @@ function renderDashboard() {
   const totalHutang   = suppliers.reduce((a, s) => a + supplierStats(s.id).hutang, 0);
   const totalSaldoAwalRekening = rekening.reduce((a, r) => a + Number(r.saldoAwal || 0), 0);
 
-  const saldo = saldoAwalTunai + totalSaldoAwalRekening + totalMasuk - totalKeluar;
+  // Modal awal laci kasir pertama = saldo awal laci (lihat Tutup Kasir)
+  const saldo = saldoAwalTunai + totalSaldoAwalRekening + tkSaldoAwalLaci() + totalMasuk - totalKeluar;
   const totalPOAktif = poData
     .filter(p => p.status === 'pending' || p.status === 'dikirim')
     .reduce((a, p) => a + Number(p.totalNilai || 0), 0);
@@ -897,7 +909,8 @@ function renderDashboard() {
     const saldoTunai = saldoAwalTunai
       + kasirData.filter(k => !k.via || k.via === 'tunai')
           .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
-      + mutasiMasukTunai - mutasiKeluarTunai;
+      + mutasiMasukTunai - mutasiKeluarTunai
+      + tkSetoranDiterima();
     const tunaiTr = document.createElement('tr');
     tunaiTr.innerHTML = `<td><strong>Tunai</strong></td><td>—</td><td class="${saldoTunai >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoTunai)}</strong></td>`;
     tbodySaldo.appendChild(tunaiTr);
@@ -912,6 +925,18 @@ function renderDashboard() {
       tr.innerHTML = `<td><strong>${esc(r.nama)}</strong></td><td>${esc(r.bank)}${r.noRek ? ' · ' + esc(r.noRek) : ''}</td><td class="${s >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(s)}</strong></td>`;
       tbodySaldo.appendChild(tr);
     });
+    if (tkData.length) {
+      const laci = tkSaldoLaci();
+      const trL = document.createElement('tr');
+      trL.innerHTML = `<td><strong>Laci Kasir</strong></td><td>Sisa uang di laci toko</td><td class="${laci >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(laci)}</strong></td>`;
+      tbodySaldo.appendChild(trL);
+      const transit = tkSetoranTransit();
+      if (transit) {
+        const trT = document.createElement('tr');
+        trT.innerHTML = `<td><strong>Setoran Kasir</strong></td><td>Belum diterima pengurus (Tutup Kasir)</td><td class="text-orange"><strong>${rupiah(transit)}</strong></td>`;
+        tbodySaldo.appendChild(trT);
+      }
+    }
   }
 
   const tbody = document.getElementById('tbody-hutang-summary');
@@ -1671,8 +1696,9 @@ function renderKasir(filter = kasirFilter) {
         <td style="${isKasirLihatSaja() ? 'display:none' : ''}">
           <div style="display:flex;gap:4px">
             ${canModify(k) && !isKasOtomatis(k) ? `<button class="btn-sm btn-sm-blue" data-edit-kas="${esc(k.id)}">✏️ Edit</button>` : ''}
-            ${canRemove(k) && !(k.sumberPiutangId && !k.sumberPiutangBayarId)
+            ${canRemove(k) && !(k.sumberPiutangId && !k.sumberPiutangBayarId) && !k.sumberTutupKasir
               ? `<button class="btn-sm btn-sm-red" data-del-kas="${esc(k.id)}">Hapus</button>` : ''}
+            ${k.sumberTutupKasir ? `<span class="text-muted-sm" title="Ubah lewat halaman Tutup Kasir">🧾 Tutup Kasir</span>` : ''}
           </div>
         </td>
       `;
@@ -1720,7 +1746,7 @@ function tambahKasKeBatch(batch, d) {
 }
 
 // Transaksi otomatis (dari pembelian, pengajuan, piutang) tidak bisa diedit — hanya dihapus
-const isKasOtomatis = k => !!(k.autoFromBeli || k.sumberPengajuanId || k.sumberPiutangId || k.kategori === 'piutang');
+const isKasOtomatis = k => !!(k.autoFromBeli || k.sumberPengajuanId || k.sumberPiutangId || k.sumberTutupKasir || k.kategori === 'piutang');
 
 let editingKasId = null;
 
@@ -2123,7 +2149,9 @@ const tglLokal = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const isTunai = k => !k.via || k.via === 'tunai';
 const isQris  = k => k.via === 'qris';
-const labelVia = k => isTunai(k) ? 'Tunai' : (isQris(k) ? 'QRIS · ' : '') + rekeningName(k.rekeningId);
+const labelVia = k => k.via === 'laci' ? 'Laci Kasir' : isTunai(k) ? 'Tunai' : (isQris(k) ? 'QRIS · ' : '') + rekeningName(k.rekeningId);
+// Uang laci kasir (dari Tutup Kasir) dihitung sebagai tunai di Rekap Harian
+const isTunaiAtauLaci = k => isTunai(k) || k.via === 'laci';
 
 function hitungRekapHarian(bulan) {
   const [y, m] = bulan.split('-').map(Number);
@@ -2140,8 +2168,8 @@ function hitungRekapHarian(bulan) {
     if (tgl > hariIni) break;   // jangan tampilkan hari yang belum terjadi
     const trx = trxBulan.filter(k => k.tgl === tgl);
     const masuk = trx.filter(k => k.jenis === 'pemasukan');
-    const masukTunai    = masuk.filter(isTunai).reduce((a, k) => a + Number(k.jumlah || 0), 0);
-    const masukTransfer = masuk.filter(k => !isTunai(k) && !isQris(k)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const masukTunai    = masuk.filter(isTunaiAtauLaci).reduce((a, k) => a + Number(k.jumlah || 0), 0);
+    const masukTransfer = masuk.filter(k => !isTunaiAtauLaci(k) && !isQris(k)).reduce((a, k) => a + Number(k.jumlah || 0), 0);
     const masukQris     = masuk.filter(isQris).reduce((a, k) => a + Number(k.jumlah || 0), 0);
     const keluar = trx.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
     const totalMasuk = masukTunai + masukTransfer + masukQris;
@@ -2241,7 +2269,7 @@ function renderRekapHarian(bulan) {
           <div class="rekap-detail-item">
             <span class="badge ${k.jenis === 'pemasukan' ? 'badge-pemasukan' : 'badge-pengeluaran'}">${k.jenis === 'pemasukan' ? 'Masuk' : 'Keluar'}</span>
             <span class="rekap-detail-kat">${esc(getKategoriLabel(k.kategori))}</span>
-            <span class="badge ${isTunai(k) ? 'badge-tunai' : 'badge-transfer'}">${esc(labelVia(k))}</span>
+            <span class="badge ${isTunaiAtauLaci(k) ? 'badge-tunai' : 'badge-transfer'}">${esc(labelVia(k))}</span>
             <span class="rekap-detail-ket">${esc(k.ket || '')}${k.inputByNama ? ` <em>· ${esc(nm(k.inputByNama))}</em>` : ''}</span>
             <strong class="${k.jenis === 'pemasukan' ? 'text-green' : 'text-red'}">${rupiah(k.jumlah)}</strong>
           </div>`).join('') +
@@ -4104,7 +4132,7 @@ const BACKUP_ROLES         = ['developer', 'pengurus'];  // restore tetap hanya 
 // Semua koleksi data app (tanpa prefix lk_) — dipakai backup, restore & migrasi
 const LK_KOLEKSI = [
   'suppliers', 'pembelian', 'kasir', 'users', 'rekening', 'po', 'anggaran', 'mutasi',
-  'piutang', 'piutang_bayar', 'pengajuan_kas', 'kategori', 'settings',
+  'piutang', 'piutang_bayar', 'pengajuan_kas', 'kategori', 'settings', 'tutup_kasir',
 ];
 
 // Timestamp Firestore tidak bisa langsung jadi JSON — simpan sebagai { __ts: millis }
@@ -4273,3 +4301,581 @@ document.getElementById('btn-migrasi')?.addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TUTUP KASIR HARIAN — kasir menyalin struk "Penutupan Penjualan" mesin kasir.
+// Dokumen lk_tutup_kasir/{tgl}. Saat disimpan, entri kas otomatis dibuat (sumberTutupKasir):
+//   • penjualan tunai → via 'laci' (uang di laci kasir, belum di tangan pengurus)
+//   • QRIS / transfer → langsung ke rekeningnya
+//   • rincian kas keluar/masuk laci → pengeluaran/pemasukan via 'laci'
+//   • selisih hitung laci → 'lainnya' via 'laci'
+// Setoran (UL) memindahkan uang laci → tunai pengurus setelah pengurus/Owner menekan Terima.
+// Status: 'menunggu' → 'diterima' | 'dikembalikan' (kasir perbaiki → 'menunggu').
+// ═══════════════════════════════════════════════════════════════════════════════
+let tkData = [];
+let tkEditTgl = null;               // tanggal yang sedang diedit
+let tkFormSiap = false;
+const tkTerbuka = new Set();
+const TK_MODAL = '__modal';         // kas masuk = tambahan modal dari pengurus (bukan pemasukan)
+const isLaci = k => k?.via === 'laci';
+const tkSetoranBersih = t => Number(t.setoran || 0) - tkTambahanModal(t);
+const tkTambahanModal = t => (t.rincian || []).filter(r => r.kategori === TK_MODAL).reduce((a, r) => a + Number(r.jumlah || 0), 0);
+const tkTerurut = () => [...tkData].sort((a, b) => String(a.tgl).localeCompare(String(b.tgl)));
+const tkBisaInput  = () => ['developer', 'kasir'].includes(currentRole);
+const tkBisaTerima = () => ['developer', 'pengurus'].includes(currentRole);
+const tkBisaEdit = t => currentRole === 'developer' || (currentRole === 'kasir' && ['menunggu', 'dikembalikan'].includes(t.status));
+const rpTanda = n => (n > 0 ? '+' : n < 0 ? '−' : '') + rupiah(Math.abs(n)).replace('Rp ', 'Rp ');
+
+// Saldo laci untuk Dashboard
+function tkSaldoAwalLaci() { return Number(tkTerurut()[0]?.modalAwal || 0); }
+function tkSetoranDiterima() { return tkData.filter(t => t.status === 'diterima').reduce((a, t) => a + tkSetoranBersih(t), 0); }
+function tkSetoranTransit()  { return tkData.filter(t => t.status !== 'diterima').reduce((a, t) => a + tkSetoranBersih(t), 0); }
+function tkSaldoLaci() {
+  return tkSaldoAwalLaci()
+    + kasirData.filter(isLaci).reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
+    - tkData.reduce((a, t) => a + tkSetoranBersih(t), 0);
+}
+
+// Angka bertanda (Kas Masuk-Keluar di struk bisa minus)
+function parseTanda(s) {
+  const str = String(s || '').trim();
+  const neg = /^[-−–]/.test(str);
+  const n = parseRibuan(str.replace(/[^0-9.,]/g, ''));
+  return neg ? -n : n;
+}
+function formatInputRibuan(el) {
+  const raw = el.value.replace(/[^0-9]/g, '');
+  el.value = raw ? Number(raw).toLocaleString('id-ID') : '';
+}
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (!el.closest?.('#page-tutupkasir')) return;
+  if (el.classList.contains('tk-angka')) formatInputRibuan(el);
+  if (el.id === 'tk-kmk') {
+    const neg = /^\s*[-−–]/.test(el.value);
+    const raw = el.value.replace(/[^0-9]/g, '');
+    el.value = (neg ? '-' : '') + (raw ? Number(raw).toLocaleString('id-ID') : '');
+  }
+  if (el.id === 'tk-resi') el.value = el.value.replace(/[^0-9]/g, '');
+  hitungTk();
+});
+document.addEventListener('change', e => {
+  if (e.target.closest?.('#page-tutupkasir')) hitungTk();
+});
+
+const tkVal = id => document.getElementById(id)?.value || '';
+const tkNum = id => parseRibuan(tkVal(id));
+
+// ── Baris QRIS / Transfer ──
+function opsiRekening(pilih) {
+  return '<option value="">-- Rekening --</option>' + rekening.map(r =>
+    `<option value="${esc(r.id)}" ${r.id === pilih ? 'selected' : ''}>${esc(r.nama)} (${esc(r.bank)})</option>`).join('');
+}
+function tambahBarisNonTunai(m = {}) {
+  const wrap = document.getElementById('tk-nontunai');
+  const row = document.createElement('div');
+  row.className = 'tk-baris tk-baris-nt';
+  row.innerHTML = `
+    <input type="text" class="tk-nt-label" placeholder="cth: QRIS / TRANSFER BRI" value="${esc(m.label || '')}">
+    <select class="tk-nt-rek">${opsiRekening(m.rekeningId)}</select>
+    <input type="text" inputmode="numeric" autocomplete="off" class="tk-nt-jumlah tk-angka" placeholder="0" value="${m.jumlah ? formatRibuan(m.jumlah) : ''}">
+    <button type="button" class="tk-hapus-baris" title="Hapus baris">✕</button>`;
+  row.querySelector('.tk-hapus-baris').onclick = () => { row.remove(); hitungTk(); };
+  wrap.appendChild(row);
+}
+function metodeDefault() {
+  const terakhir = [...tkTerurut()].reverse().find(t => (t.nonTunai || []).length);
+  if (terakhir) return terakhir.nonTunai.map(m => ({ label: m.label, rekeningId: m.rekeningId }));
+  const rekQris = kasirData.find(k => k.via === 'qris' && k.rekeningId)?.rekeningId
+    || rekening.find(r => /qris/i.test(`${r.nama} ${r.bank}`))?.id || '';
+  // Rekening transfer: utamakan yang bukan penampung QRIS
+  const cari = re => (rekening.find(r => r.id !== rekQris && re.test(`${r.nama} ${r.bank}`) && !/qris/i.test(r.nama))
+    || rekening.find(r => re.test(`${r.nama} ${r.bank}`)))?.id || '';
+  return [
+    { label: 'QRIS', rekeningId: rekQris },
+    { label: 'TRANSFER BRI', rekeningId: cari(/\bBRI\b/i) },
+    { label: 'TRANSFER BNI', rekeningId: cari(/\bBNI\b/i) },
+  ];
+}
+function bacaNonTunai() {
+  return [...document.querySelectorAll('#tk-nontunai .tk-baris')].map(row => {
+    const label = row.querySelector('.tk-nt-label').value.trim();
+    return {
+      label, rekeningId: row.querySelector('.tk-nt-rek').value || null,
+      via: /qris/i.test(label) ? 'qris' : 'transfer',
+      jumlah: parseRibuan(row.querySelector('.tk-nt-jumlah').value),
+    };
+  });
+}
+
+// ── Baris rincian Kas Masuk-Keluar ──
+function opsiKategoriTk(arah, pilih) {
+  const jenis = arah === 'masuk' ? 'pemasukan' : 'pengeluaran';
+  const kecuali = ['piutang', 'bayar-supplier', 'terima-piutang', 'penjualan'];
+  const list = approvedKategori().filter(k => (k.jenis === jenis || k.jenis === 'both') && !kecuali.includes(k.key));
+  const opsi = list.map(k => `<option value="${esc(k.key)}" ${k.key === pilih ? 'selected' : ''}>${esc(k.label)}</option>`);
+  if (arah === 'masuk') opsi.unshift(`<option value="${TK_MODAL}" ${pilih === TK_MODAL ? 'selected' : ''}>Tambahan modal dari pengurus</option>`);
+  return '<option value="">-- Kategori --</option>' + opsi.join('');
+}
+function riwayatRincian() {
+  // keterangan → {arah, kategori} terakhir dipakai, untuk isi otomatis
+  const peta = new Map();
+  tkTerurut().forEach(t => (t.rincian || []).forEach(r => { if (r.ket) peta.set(r.ket.trim().toLowerCase(), { ket: r.ket.trim(), arah: r.arah, kategori: r.kategori }); }));
+  return peta;
+}
+function isiDatalistKet() {
+  const dl = document.getElementById('tk-ket-list');
+  if (dl) dl.innerHTML = [...riwayatRincian().values()].map(r => `<option value="${esc(r.ket)}">`).join('');
+}
+function tambahBarisRincian(r = {}) {
+  const wrap = document.getElementById('tk-rincian');
+  const row = document.createElement('div');
+  row.className = 'tk-baris tk-baris-rc';
+  const arah = r.arah || 'keluar';
+  row.innerHTML = `
+    <select class="tk-rc-arah"><option value="keluar" ${arah === 'keluar' ? 'selected' : ''}>Keluar</option><option value="masuk" ${arah === 'masuk' ? 'selected' : ''}>Masuk</option></select>
+    <input type="text" class="tk-rc-ket" list="tk-ket-list" placeholder="cth: Bayar ekspedisi" value="${esc(r.ket || '')}">
+    <select class="tk-rc-kat">${opsiKategoriTk(arah, r.kategori || (arah === 'keluar' ? 'operasional' : ''))}</select>
+    <input type="text" inputmode="numeric" autocomplete="off" class="tk-rc-jumlah tk-angka" placeholder="0" value="${r.jumlah ? formatRibuan(r.jumlah) : ''}">
+    <button type="button" class="tk-hapus-baris" title="Hapus baris">✕</button>`;
+  const selArah = row.querySelector('.tk-rc-arah'), selKat = row.querySelector('.tk-rc-kat');
+  selArah.onchange = () => { selKat.innerHTML = opsiKategoriTk(selArah.value, selArah.value === 'keluar' ? 'operasional' : ''); hitungTk(); };
+  row.querySelector('.tk-rc-ket').addEventListener('change', e => {
+    const lama = riwayatRincian().get(e.target.value.trim().toLowerCase());
+    if (!lama) return;
+    selArah.value = lama.arah || 'keluar';
+    selKat.innerHTML = opsiKategoriTk(selArah.value, lama.kategori);
+    hitungTk();
+  });
+  row.querySelector('.tk-hapus-baris').onclick = () => { row.remove(); hitungTk(); };
+  wrap.appendChild(row);
+}
+function bacaRincian() {
+  return [...document.querySelectorAll('#tk-rincian .tk-baris')].map(row => ({
+    arah: row.querySelector('.tk-rc-arah').value,
+    ket: row.querySelector('.tk-rc-ket').value.trim(),
+    kategori: row.querySelector('.tk-rc-kat').value,
+    jumlah: parseRibuan(row.querySelector('.tk-rc-jumlah').value),
+  })).filter(r => r.ket || r.jumlah);
+}
+
+// ── Hitung & cek otomatis ──
+function bacaFormTk() {
+  const nonTunai = bacaNonTunai().filter(m => m.label || m.jumlah);
+  const rincian = bacaRincian();
+  const d = {
+    tgl: tkVal('tk-tgl'),
+    modalAwal: tkNum('tk-modal'),
+    resi: Number(tkVal('tk-resi') || 0),
+    totalPenjualan: tkNum('tk-total'),
+    diskon: tkNum('tk-diskon'),
+    penjualanTunai: tkNum('tk-tunai'),
+    returTunai: tkNum('tk-retur'),
+    nonTunai, rincian,
+    kmkStruk: parseTanda(tkVal('tk-kmk')),
+    alasanBedaStruk: tkVal('tk-alasan-kmk').trim(),
+    setoran: tkNum('tk-setoran'),
+    uangFisikDiisi: tkVal('tk-fisik').trim() !== '',
+    uangFisik: tkNum('tk-fisik'),
+    alasanSelisih: tkVal('tk-alasan-selisih').trim(),
+  };
+  d.tunaiBersih = d.penjualanTunai - d.returTunai;
+  d.nonTunaiTotal = nonTunai.reduce((a, m) => a + m.jumlah, 0);
+  d.rincianNet = rincian.reduce((a, r) => a + (r.arah === 'masuk' ? 1 : -1) * r.jumlah, 0);
+  d.seharusnya = d.modalAwal + d.tunaiBersih + d.rincianNet - d.setoran;
+  d.selisih = d.uangFisikDiisi ? d.uangFisik - d.seharusnya : 0;
+  return d;
+}
+function hitungTk() {
+  const box = document.getElementById('tk-hitung');
+  if (!box) return;
+  const d = bacaFormTk();
+  // Total penjualan struk = tunai + QRIS/transfer
+  const cekTotal = document.getElementById('tk-cek-total');
+  const jumlahMetode = d.tunaiBersih + d.nonTunaiTotal;
+  if (!d.totalPenjualan) cekTotal.innerHTML = '';
+  else if (jumlahMetode === d.totalPenjualan) { cekTotal.className = 'tk-cek tk-ok'; cekTotal.textContent = `✅ Tunai + QRIS/Transfer = ${rupiah(jumlahMetode)}, cocok dengan Total Penjualan`; }
+  else { cekTotal.className = 'tk-cek tk-beda'; cekTotal.textContent = `⚠️ Tunai + QRIS/Transfer = ${rupiah(jumlahMetode)}, Total Penjualan di struk ${rupiah(d.totalPenjualan)} (beda ${rupiah(Math.abs(d.totalPenjualan - jumlahMetode))}) — cek lagi angkanya`; }
+  // Rincian vs Kas Masuk-Keluar
+  const cekKmk = document.getElementById('tk-cek-kmk');
+  const adaKmk = tkVal('tk-kmk').trim() !== '' || d.rincian.length;
+  const cocok = d.rincianNet === d.kmkStruk;
+  if (!adaKmk) cekKmk.innerHTML = '';
+  else if (cocok) { cekKmk.className = 'tk-cek tk-ok'; cekKmk.textContent = `✅ Rincian ${rpTanda(d.rincianNet)} = Kas Masuk-Keluar di struk`; }
+  else {
+    const kurang = d.kmkStruk - d.rincianNet;
+    cekKmk.className = 'tk-cek tk-beda';
+    cekKmk.textContent = `⚠️ Rincian ${rpTanda(d.rincianNet)}, struk ${rpTanda(d.kmkStruk)} — ${kurang < 0 ? `masih ada kas keluar ${rupiah(-kurang)} yang belum dicatat` : `rincian kelebihan ${rupiah(kurang)}`}`;
+  }
+  document.getElementById('tk-alasan-kmk-wrap').style.display = adaKmk && !cocok ? '' : 'none';
+
+  const baris = [
+    ['Modal awal laci', d.modalAwal],
+    ['+ Penjualan tunai', d.penjualanTunai],
+    ...(d.returTunai ? [['− Pengembalian/pembatalan tunai', -d.returTunai]] : []),
+    ...(d.rincianNet ? [[`${d.rincianNet < 0 ? '−' : '+'} Kas masuk-keluar (rincian)`, d.rincianNet]] : []),
+    ['− Setoran ke pengurus', -d.setoran],
+  ];
+  let html = '<table>' + baris.map(([l, v]) => `<tr><td>${l}</td><td>${rupiah(Math.abs(v))}</td></tr>`).join('');
+  html += `<tr class="tk-garis"><td>= Seharusnya ada di laci</td><td>${rupiah(d.seharusnya)}</td></tr>`;
+  if (d.uangFisikDiisi) {
+    html += `<tr><td>Uang fisik dihitung</td><td>${rupiah(d.uangFisik)}</td></tr>`;
+    const warna = d.selisih === 0 ? 'var(--green)' : '#c2410c';
+    const ket = d.selisih === 0 ? 'pas ✅' : d.selisih > 0 ? 'lebih' : 'kurang';
+    html += `<tr class="tk-garis" style="color:${warna}"><td>Selisih (${ket})</td><td>${d.selisih === 0 ? 'Rp 0' : rpTanda(d.selisih)}</td></tr>`;
+  }
+  box.innerHTML = html + '</table>';
+  document.getElementById('tk-alasan-selisih-wrap').style.display = d.uangFisikDiisi && d.selisih !== 0 ? '' : 'none';
+}
+
+// Modal awal = sisa laci tutup kasir sebelumnya
+function tkSebelum(tgl) { return [...tkTerurut()].reverse().find(t => t.tgl < tgl); }
+function isiModalAwal(paksa = false) {
+  const tgl = tkVal('tk-tgl');
+  const info = document.getElementById('tk-modal-info');
+  const prev = tgl ? tkSebelum(tgl) : null;
+  if (prev && (paksa || !tkVal('tk-modal'))) document.getElementById('tk-modal').value = formatRibuan(prev.uangFisik);
+  info.textContent = prev ? `Sisa laci ${labelTglTk(prev.tgl)}: ${rupiah(prev.uangFisik)}` : 'Belum ada tutup kasir sebelumnya — isi modal awal laci.';
+}
+const labelTglTk = tgl => tgl ? new Date(tgl + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+
+function resetTkForm() {
+  tkEditTgl = null;
+  tkNtDisentuh = false;
+  const tglEl = document.getElementById('tk-tgl');
+  tglEl.value = tglLokal(); tglEl.disabled = false;
+  ['tk-modal', 'tk-resi', 'tk-total', 'tk-diskon', 'tk-tunai', 'tk-retur', 'tk-kmk', 'tk-alasan-kmk', 'tk-setoran', 'tk-fisik', 'tk-alasan-selisih', 'tk-foto']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('tk-nontunai').innerHTML = '';
+  metodeDefault().forEach(tambahBarisNonTunai);
+  document.getElementById('tk-rincian').innerHTML = '';
+  tambahBarisRincian();
+  document.getElementById('tk-foto-lama').innerHTML = '';
+  document.getElementById('tk-dikembalikan-note').innerHTML = '';
+  setEl('tk-form-title', 'Tutup Kasir');
+  document.getElementById('btn-simpan-tk').textContent = '💾 Simpan Tutup Kasir';
+  document.getElementById('btn-batal-tk').style.display = 'none';
+  isiDatalistKet();
+  isiModalAwal(true);
+  hitungTk();
+  tkFormSiap = true;
+}
+
+function isiFormTk(t) {
+  tkEditTgl = t.tgl;
+  const tglEl = document.getElementById('tk-tgl');
+  tglEl.value = t.tgl; tglEl.disabled = true;
+  const set = (id, v) => { document.getElementById(id).value = v ? formatRibuan(v) : ''; };
+  set('tk-modal', t.modalAwal); set('tk-total', t.totalPenjualan); set('tk-diskon', t.diskon);
+  set('tk-tunai', t.penjualanTunai); set('tk-retur', t.returTunai); set('tk-setoran', t.setoran);
+  document.getElementById('tk-modal').value = formatRibuan(t.modalAwal || 0);
+  document.getElementById('tk-fisik').value = formatRibuan(t.uangFisik || 0);
+  document.getElementById('tk-resi').value = t.resi || '';
+  document.getElementById('tk-kmk').value = t.kmkStruk ? (t.kmkStruk < 0 ? '-' : '') + formatRibuan(Math.abs(t.kmkStruk)) : '';
+  document.getElementById('tk-alasan-kmk').value = t.alasanBedaStruk || '';
+  document.getElementById('tk-alasan-selisih').value = t.alasanSelisih || '';
+  document.getElementById('tk-nontunai').innerHTML = '';
+  (t.nonTunai || []).forEach(tambahBarisNonTunai);
+  document.getElementById('tk-rincian').innerHTML = '';
+  (t.rincian || []).forEach(tambahBarisRincian);
+  if (!(t.rincian || []).length) tambahBarisRincian();
+  document.getElementById('tk-foto').value = '';
+  document.getElementById('tk-foto-lama').innerHTML = t.fotoStruk ? `Foto tersimpan: <a href="${safeUrl(t.fotoStruk)}" target="_blank" rel="noopener">lihat</a> (pilih file baru untuk mengganti)` : '';
+  document.getElementById('tk-dikembalikan-note').innerHTML = t.status === 'dikembalikan'
+    ? `<div class="tk-cek tk-beda" style="margin-bottom:12px">↩️ Dikembalikan oleh ${esc(t.dikembalikanNama || 'pengurus')}: ${esc(t.catatanKembali || '-')}</div>` : '';
+  setEl('tk-form-title', `Edit Tutup Kasir · ${labelTglTk(t.tgl)}`);
+  document.getElementById('btn-simpan-tk').textContent = '💾 Simpan Perubahan';
+  document.getElementById('btn-batal-tk').style.display = '';
+  document.getElementById('tk-modal-info').textContent = (() => { const p = tkSebelum(t.tgl); return p ? `Sisa laci ${labelTglTk(p.tgl)}: ${rupiah(p.uangFisik)}` : ''; })();
+  isiDatalistKet();
+  hitungTk();
+  document.getElementById('form-tk-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+document.getElementById('tk-tgl').addEventListener('change', () => {
+  const tgl = tkVal('tk-tgl');
+  const ada = tkData.find(t => t.tgl === tgl);
+  if (ada && !tkEditTgl) {
+    toast(`Tutup kasir ${labelTglTk(tgl)} sudah ada${tkBisaEdit(ada) ? ' — dibuka untuk diedit' : ''}`, 'error');
+    if (tkBisaEdit(ada)) isiFormTk(ada);
+    return;
+  }
+  isiModalAwal(true);
+});
+document.getElementById('btn-tk-tambah-nontunai').onclick = () => tambahBarisNonTunai();
+document.getElementById('btn-tk-tambah-rincian').onclick = () => { tambahBarisRincian(); document.querySelector('#tk-rincian .tk-baris:last-child .tk-rc-ket')?.focus(); };
+document.getElementById('btn-batal-tk').onclick = () => resetTkForm();
+
+// ── Simpan ──
+function entriKasTutup(d, tgl) {
+  const base = { tgl, supplierId: null, sumberPiutangId: null, sumberTutupKasir: tgl, ...inputByFields(), createdAt: serverTimestamp() };
+  const list = [];
+  if (d.tunaiBersih > 0) list.push({ ...base, jenis: 'pemasukan', kategori: 'penjualan', jumlah: d.tunaiBersih, via: 'laci', rekeningId: null,
+    ket: `Penjualan tunai${d.resi ? ` · ${d.resi} resi` : ''} (Tutup Kasir)` });
+  d.nonTunai.filter(m => m.jumlah > 0).forEach(m => list.push({ ...base, jenis: 'pemasukan', kategori: 'penjualan', jumlah: m.jumlah,
+    via: m.via, rekeningId: m.rekeningId, ket: `Penjualan ${m.label || m.via.toUpperCase()} (Tutup Kasir)` }));
+  d.rincian.filter(r => r.jumlah > 0 && r.kategori !== TK_MODAL).forEach(r => list.push({ ...base,
+    jenis: r.arah === 'masuk' ? 'pemasukan' : 'pengeluaran', kategori: r.kategori, jumlah: r.jumlah, via: 'laci', rekeningId: null,
+    ket: `${r.ket} (laci kasir)` }));
+  if (d.selisih) list.push({ ...base, jenis: d.selisih > 0 ? 'pemasukan' : 'pengeluaran', kategori: 'lainnya', jumlah: Math.abs(d.selisih),
+    via: 'laci', rekeningId: null, ket: `Selisih kas kasir ${d.selisih > 0 ? 'lebih' : 'kurang'}: ${d.alasanSelisih}` });
+  return list;
+}
+
+document.getElementById('btn-simpan-tk').addEventListener('click', async () => {
+  if (!tkBisaInput()) return;
+  const d = bacaFormTk();
+  const err = m => { toast(m, 'error'); return null; };
+  if (!d.tgl) return err('Isi tanggal jual');
+  if (d.tgl > tglLokal()) return err('Tanggal belum terjadi');
+  const lama = tkData.find(t => t.tgl === d.tgl);
+  if (lama && !tkEditTgl) return err('Tutup kasir tanggal ini sudah ada — edit dari Laporan Kasir');
+  if (lama && !tkBisaEdit(lama)) return err('Tutup kasir ini sudah diterima — tidak bisa diubah');
+  if (!d.uangFisikDiisi) return err('Isi uang fisik yang tersisa di laci (hitung uangnya)');
+  if (d.nonTunai.some(m => m.jumlah > 0 && !m.rekeningId)) return err('Pilih rekening untuk setiap QRIS/Transfer');
+  if (d.nonTunai.some(m => m.jumlah > 0 && !m.label)) return err('Isi nama metode (cth: QRIS, TRANSFER BRI)');
+  if (d.rincian.some(r => !r.ket || !r.jumlah)) return err('Lengkapi keterangan & jumlah setiap rincian (atau hapus barisnya)');
+  if (d.rincian.some(r => !r.kategori)) return err('Pilih kategori setiap rincian');
+  if (d.rincianNet !== d.kmkStruk && !d.alasanBedaStruk) return err('Rincian belum cocok dengan Kas Masuk-Keluar di struk — lengkapi rinciannya atau isi alasan');
+  if (d.selisih && !d.alasanSelisih) return err('Ada selisih uang laci — isi alasannya');
+
+  const btn = document.getElementById('btn-simpan-tk');
+  btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try {
+    let fotoStruk = lama?.fotoStruk || null;
+    const file = document.getElementById('tk-foto').files[0];
+    if (file) {
+      const r = storageRef(storage, `bukti-transfer/tutup-kasir_${d.tgl}_${Date.now()}_${file.name}`);
+      await uploadBytes(r, file);
+      fotoStruk = await getDownloadURL(r);
+    }
+    const isi = {
+      tgl: d.tgl, modalAwal: d.modalAwal, resi: d.resi, totalPenjualan: d.totalPenjualan, diskon: d.diskon,
+      penjualanTunai: d.penjualanTunai, returTunai: d.returTunai, nonTunai: d.nonTunai, rincian: d.rincian,
+      kmkStruk: d.kmkStruk, alasanBedaStruk: d.rincianNet !== d.kmkStruk ? d.alasanBedaStruk : '',
+      setoran: d.setoran, uangFisik: d.uangFisik, seharusnya: d.seharusnya, selisih: d.selisih,
+      alasanSelisih: d.selisih ? d.alasanSelisih : '', fotoStruk,
+      updatedAt: serverTimestamp(), updatedByNama: currentUserData?.nama || currentUser?.email || '',
+    };
+    const batch = writeBatch(db);
+    const ref = doc(db, 'lk_tutup_kasir', d.tgl);
+    if (lama) {
+      kasirData.filter(k => k.sumberTutupKasir === d.tgl).forEach(k => batch.delete(doc(db, 'lk_kasir', k.id)));
+      batch.update(ref, { ...isi, status: lama.status === 'diterima' ? 'diterima' : 'menunggu' });
+    } else {
+      batch.set(ref, { ...isi, status: 'menunggu', ...inputByFields(), createdAt: serverTimestamp() });
+    }
+    entriKasTutup(d, d.tgl).forEach(e => batch.set(doc(collection(db, 'lk_kasir')), e));
+    await batch.commit();
+    toast(lama ? 'Tutup kasir diperbarui' : 'Tutup kasir tersimpan — menunggu setoran diterima pengurus');
+    resetTkForm();
+  } catch (e) {
+    toast('Gagal menyimpan: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    if (!tkEditTgl) btn.textContent = '💾 Simpan Tutup Kasir';
+  }
+});
+
+// ── Terima / kembalikan / hapus ──
+function tkTerima(t) {
+  confirmDelete(`Terima setoran tunai <b>${rupiah(tkSetoranBersih(t))}</b> dari kasir (${esc(labelTglTk(t.tgl))})?<br><small style="color:var(--text-muted)">Pastikan uangnya sudah dihitung. Setelah diterima, uang masuk ke saldo Tunai dan tutup kasir hari ini terkunci.</small>`, async () => {
+    try {
+      await updateDoc(doc(db, 'lk_tutup_kasir', t.tgl), {
+        status: 'diterima', diterimaId: currentUser.uid,
+        diterimaNama: currentUserData?.nama || currentUser?.email || '', diterimaAt: serverTimestamp(),
+      });
+      toast('Setoran diterima');
+    } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+  }, '✅ Terima');
+}
+function tkKembalikan(t) {
+  const catatan = prompt('Kembalikan ke kasir untuk diperbaiki. Apa yang perlu dicek?', '');
+  if (catatan === null) return;
+  if (!catatan.trim()) { toast('Isi catatan untuk kasir', 'error'); return; }
+  updateDoc(doc(db, 'lk_tutup_kasir', t.tgl), {
+    status: 'dikembalikan', catatanKembali: catatan.trim(), dikembalikanId: currentUser.uid,
+    dikembalikanNama: currentUserData?.nama || currentUser?.email || '', dikembalikanAt: serverTimestamp(),
+  }).then(() => toast('Dikembalikan ke kasir')).catch(e => toast('Gagal: ' + e.message, 'error'));
+}
+function tkHapus(t) {
+  confirmDelete(`Hapus tutup kasir ${esc(labelTglTk(t.tgl))}?<br><small style="color:var(--text-muted)">Penjualan, pengeluaran laci & selisih hari itu ikut terhapus dari buku kas.</small>`, async () => {
+    try {
+      const batch = writeBatch(db);
+      kasirData.filter(k => k.sumberTutupKasir === t.tgl).forEach(k => batch.delete(doc(db, 'lk_kasir', k.id)));
+      batch.delete(doc(db, 'lk_tutup_kasir', t.tgl));
+      await batch.commit();
+      if (tkEditTgl === t.tgl) resetTkForm();
+      toast('Tutup kasir dihapus');
+    } catch (e) { toast('Gagal menghapus: ' + e.message, 'error'); }
+  });
+}
+
+// ── Tampilan ──
+function badgeStatusTk(t) {
+  if (t.status === 'diterima') return `<span class="badge badge-lunas" title="Diterima ${esc(t.diterimaNama || '')}">✅ Diterima</span>`;
+  if (t.status === 'dikembalikan') return '<span class="badge badge-dikembalikan">↩️ Dikembalikan</span>';
+  return '<span class="badge badge-menunggu">⏳ Menunggu</span>';
+}
+function updateBadgeTk() {
+  const el = document.getElementById('badge-tk-menunggu');
+  if (!el) return;
+  const n = tkBisaTerima() ? tkData.filter(t => t.status === 'menunggu').length
+    : currentRole === 'kasir' ? tkData.filter(t => t.status === 'dikembalikan').length : 0;
+  el.textContent = n; el.classList.toggle('hidden', !n); el.style.display = n ? '' : 'none';
+}
+function detailTkHtml(t) {
+  const baris = (l, v) => `<tr><td>${l}</td><td>${v}</td></tr>`;
+  const nt = (t.nonTunai || []).filter(m => m.jumlah);
+  const rc = t.rincian || [];
+  return `<div class="tk-detail-grid">
+    <div><h4>Struk</h4><table>
+      ${baris('Resi', t.resi || 0)}${baris('Total penjualan', rupiah(t.totalPenjualan))}${t.diskon ? baris('Diskon item', rupiah(t.diskon)) : ''}
+      ${baris('Penjualan tunai', rupiah(t.penjualanTunai))}${t.returTunai ? baris('Pengembalian/pembatalan', rupiah(t.returTunai)) : ''}
+      ${nt.map(m => baris(`${esc(m.label)} → ${esc(rekeningName(m.rekeningId))}`, rupiah(m.jumlah))).join('')}
+    </table></div>
+    <div><h4>Kas masuk-keluar laci</h4><table>
+      ${rc.length ? rc.map(r => baris(`${r.arah === 'masuk' ? '＋' : '－'} ${esc(r.ket)} <span class="text-muted-sm">· ${esc(r.kategori === TK_MODAL ? 'Tambahan modal' : getKategoriLabel(r.kategori))}</span>`, rupiah(r.jumlah))).join('') : baris('<span class="text-muted-sm">Tidak ada</span>', '')}
+      ${baris('<b>Struk</b>', `<b>${rpTanda(Number(t.kmkStruk || 0))}</b>`)}
+    </table>${t.alasanBedaStruk ? `<div class="tk-cek tk-beda">Beda dengan struk: ${esc(t.alasanBedaStruk)}</div>` : ''}</div>
+    <div><h4>Laci</h4><table>
+      ${baris('Modal awal', rupiah(t.modalAwal))}${baris('Setoran (UL)', rupiah(t.setoran))}
+      ${baris('Seharusnya di laci', rupiah(t.seharusnya))}${baris('Uang fisik', rupiah(t.uangFisik))}
+      ${baris('Selisih', t.selisih ? rpTanda(t.selisih) : 'Rp 0')}
+    </table>${t.alasanSelisih ? `<div class="tk-cek tk-beda">Alasan selisih: ${esc(t.alasanSelisih)}</div>` : ''}
+    <div class="text-muted-sm" style="margin-top:6px">Diinput ${esc(t.inputByNama || '-')}${t.updatedByNama && t.updatedByNama !== t.inputByNama ? ` · diubah ${esc(t.updatedByNama)}` : ''}${t.status === 'diterima' ? ` · diterima ${esc(t.diterimaNama || '-')}` : ''}</div>
+    ${t.catatanKembali && t.status === 'dikembalikan' ? `<div class="tk-cek tk-beda">↩️ ${esc(t.catatanKembali)}</div>` : ''}
+    ${t.fotoStruk ? `<div style="margin-top:6px"><a href="${safeUrl(t.fotoStruk)}" target="_blank" rel="noopener">📷 Lihat foto struk</a></div>` : ''}</div>
+  </div>`;
+}
+function aksiTkHtml(t) {
+  const b = [];
+  b.push(`<button class="btn-sm btn-sm-gray" data-tk-detail="${esc(t.tgl)}">${tkTerbuka.has(t.tgl) ? 'Tutup' : 'Rincian'}</button>`);
+  if (tkBisaTerima() && t.status === 'menunggu') {
+    b.push(`<button class="btn-sm btn-sm-green" data-tk-terima="${esc(t.tgl)}">✅ Terima</button>`);
+    b.push(`<button class="btn-sm btn-sm-red" data-tk-kembali="${esc(t.tgl)}">↩️</button>`);
+  }
+  if (tkBisaInput() && tkBisaEdit(t)) b.push(`<button class="btn-sm btn-sm-blue" data-tk-edit="${esc(t.tgl)}">✏️</button>`);
+  if (tkBisaInput() && tkBisaEdit(t)) b.push(`<button class="btn-sm btn-sm-red" data-tk-hapus="${esc(t.tgl)}">🗑</button>`);
+  return `<div style="display:flex;gap:4px">${b.join('')}</div>`;
+}
+
+function renderTutupKasir() {
+  updateBadgeTk();
+  const page = document.getElementById('page-tutupkasir');
+  if (!page) return;
+  document.getElementById('form-tk-wrap').style.display = tkBisaInput() ? '' : 'none';
+  if (tkBisaInput() && !tkFormSiap && page.classList.contains('active')) resetTkForm();
+
+  // Setoran menunggu diterima
+  const wrapM = document.getElementById('tk-menunggu-wrap');
+  const menunggu = tkTerurut().filter(t => t.status === 'menunggu' || t.status === 'dikembalikan');
+  wrapM.innerHTML = menunggu.length ? `<div class="tk-menunggu"><b>${tkBisaTerima() ? '💵 Setoran kasir menunggu diterima' : '⏳ Belum diterima pengurus'}</b>
+    ${menunggu.map(t => `<div class="tk-menunggu-item"><span>${esc(labelTglTk(t.tgl))} · setoran <b>${rupiah(tkSetoranBersih(t))}</b> ${badgeStatusTk(t)}${t.status === 'dikembalikan' ? ` <span class="text-muted-sm">${esc(t.catatanKembali || '')}</span>` : ''}</span>${aksiTkHtml(t)}</div>`).join('')}</div>` : '';
+
+  // Laporan bulan
+  const bulanEl = document.getElementById('filter-tk-bulan');
+  if (!bulanEl.value) bulanEl.value = tglLokal().slice(0, 7);
+  const bulan = bulanEl.value;
+  const list = tkTerurut().filter(t => monthOf(t.tgl) === bulan).reverse();
+  const sum = f => list.reduce((a, t) => a + f(t), 0);
+  const nonTunaiT = t => (t.nonTunai || []).reduce((a, m) => a + Number(m.jumlah || 0), 0);
+  const keluarT = t => (t.rincian || []).filter(r => r.arah !== 'masuk').reduce((a, r) => a + Number(r.jumlah || 0), 0);
+  const penjualanT = t => Number(t.penjualanTunai || 0) - Number(t.returTunai || 0) + nonTunaiT(t);
+  const tot = { jual: sum(penjualanT), tunai: sum(t => t.penjualanTunai - (t.returTunai || 0)), nt: sum(nonTunaiT), keluar: sum(keluarT), setor: sum(t => t.setoran || 0), selisih: sum(t => t.selisih || 0), resi: sum(t => Number(t.resi || 0)) };
+  const kartu = (cls, label, val, sub = '') => `<div class="card ${cls}"><div class="card-label">${label}</div><div class="card-value">${val}</div>${sub ? `<div class="text-muted-sm" style="margin-top:4px">${sub}</div>` : ''}</div>`;
+  document.getElementById('tk-ringkasan').innerHTML = list.length ? [
+    kartu('card-green', 'Penjualan', rupiah(tot.jual), `${list.length} hari · ${tot.resi} resi`),
+    kartu('card-teal', 'Tunai', rupiah(tot.tunai)),
+    kartu('card-blue', 'QRIS / Transfer', rupiah(tot.nt)),
+    kartu('card-red', 'Keluar dari Laci', rupiah(tot.keluar)),
+    kartu('card-purple', 'Setoran', rupiah(tot.setor)),
+    kartu(tot.selisih < 0 ? 'card-red' : 'card-orange', 'Selisih Kas', tot.selisih ? rpTanda(tot.selisih) : 'Rp 0', `${list.filter(t => t.selisih).length} hari ada selisih`),
+  ].join('') : '';
+
+  const tbody = document.getElementById('tbody-tk');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty-note">Belum ada tutup kasir di bulan ini</td></tr>';
+    document.getElementById('tfoot-tk').innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = list.map(t => {
+    const prev = tkSebelum(t.tgl);
+    const modalBeda = prev && Number(prev.uangFisik) !== Number(t.modalAwal);
+    const bedaStruk = Number(t.kmkStruk || 0) !== (t.rincian || []).reduce((a, r) => a + (r.arah === 'masuk' ? 1 : -1) * Number(r.jumlah || 0), 0);
+    return `<tr>
+      <td><b>${esc(labelTglTk(t.tgl))}</b>${modalBeda ? `<br><span class="text-muted-sm" style="color:#c2410c" title="Modal awal ${rupiah(t.modalAwal)}, sisa laci sebelumnya ${rupiah(prev.uangFisik)}">⚠️ modal ≠ sisa kemarin</span>` : ''}</td>
+      <td>${t.resi || 0}</td>
+      <td><b>${rupiah(penjualanT(t))}</b></td>
+      <td>${rupiah(t.penjualanTunai - (t.returTunai || 0))}</td>
+      <td>${rupiah(nonTunaiT(t))}</td>
+      <td class="text-red">${rupiah(keluarT(t))}${bedaStruk ? ' <span title="Rincian beda dengan struk">⚠️</span>' : ''}</td>
+      <td>${rupiah(t.setoran)}</td>
+      <td>${rupiah(t.uangFisik)}</td>
+      <td style="color:${t.selisih ? '#c2410c' : 'var(--green)'};font-weight:700">${t.selisih ? rpTanda(t.selisih) : '✓'}</td>
+      <td>${badgeStatusTk(t)}</td>
+      <td>${aksiTkHtml(t)}</td>
+    </tr>${tkTerbuka.has(t.tgl) ? `<tr class="tk-detail"><td colspan="11">${detailTkHtml(t)}</td></tr>` : ''}`;
+  }).join('');
+  document.getElementById('tfoot-tk').innerHTML = `<tr>
+    <td class="tfoot-label">Total</td><td>${tot.resi}</td><td class="tfoot-value">${rupiah(tot.jual)}</td><td>${rupiah(tot.tunai)}</td><td>${rupiah(tot.nt)}</td>
+    <td class="text-red">${rupiah(tot.keluar)}</td><td>${rupiah(tot.setor)}</td><td></td><td>${tot.selisih ? rpTanda(tot.selisih) : 'Rp 0'}</td><td colspan="2"></td></tr>`;
+}
+
+document.getElementById('page-tutupkasir').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const cari = tgl => tkData.find(t => t.tgl === tgl);
+  if (btn.dataset.tkDetail) { const g = btn.dataset.tkDetail; tkTerbuka.has(g) ? tkTerbuka.delete(g) : tkTerbuka.add(g); renderTutupKasir(); }
+  else if (btn.dataset.tkTerima) { const t = cari(btn.dataset.tkTerima); if (t) tkTerima(t); }
+  else if (btn.dataset.tkKembali) { const t = cari(btn.dataset.tkKembali); if (t) tkKembalikan(t); }
+  else if (btn.dataset.tkEdit) { const t = cari(btn.dataset.tkEdit); if (t && tkBisaEdit(t)) isiFormTk(t); }
+  else if (btn.dataset.tkHapus) { const t = cari(btn.dataset.tkHapus); if (t && tkBisaEdit(t)) tkHapus(t); }
+});
+document.getElementById('filter-tk-bulan').addEventListener('change', () => renderTutupKasir());
+
+document.getElementById('btn-export-tk').addEventListener('click', () => {
+  if (typeof XLSX === 'undefined') { toast('Library Excel belum termuat, coba muat ulang halaman', 'error'); return; }
+  const bulan = document.getElementById('filter-tk-bulan').value;
+  const list = tkTerurut().filter(t => monthOf(t.tgl) === bulan);
+  if (!list.length) { toast('Belum ada data di bulan ini', 'error'); return; }
+  const status = { menunggu: 'Menunggu', diterima: 'Diterima', dikembalikan: 'Dikembalikan' };
+  const metode = [...new Set(list.flatMap(t => (t.nonTunai || []).map(m => m.label)))];
+  const rows = list.map(t => {
+    const r = { Tanggal: t.tgl, Resi: t.resi || 0, 'Total Penjualan': t.totalPenjualan, Diskon: t.diskon || 0,
+      'Penjualan Tunai': t.penjualanTunai, 'Pengembalian Tunai': t.returTunai || 0 };
+    metode.forEach(l => { r[l] = (t.nonTunai || []).filter(m => m.label === l).reduce((a, m) => a + m.jumlah, 0); });
+    Object.assign(r, { 'Kas Masuk-Keluar (struk)': t.kmkStruk || 0, 'Modal Awal': t.modalAwal, 'Setoran (UL)': t.setoran,
+      'Seharusnya di Laci': t.seharusnya, 'Uang Fisik': t.uangFisik, Selisih: t.selisih || 0, 'Alasan Selisih': t.alasanSelisih || '',
+      Status: status[t.status] || t.status, 'Diinput Oleh': t.inputByNama || '', 'Diterima Oleh': t.diterimaNama || '' });
+    return r;
+  });
+  const rincian = list.flatMap(t => (t.rincian || []).map(r => ({ Tanggal: t.tgl, Arah: r.arah === 'masuk' ? 'Masuk' : 'Keluar',
+    Keterangan: r.ket, Kategori: r.kategori === TK_MODAL ? 'Tambahan modal' : getKategoriLabel(r.kategori), Jumlah: r.jumlah })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Laporan Kasir');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rincian.length ? rincian : [{ Keterangan: 'Tidak ada' }]), 'Rincian Kas Laci');
+  XLSX.writeFile(wb, `Laporan_Kasir_${bulan}.xlsx`);
+});
+
+// Data (rekening, kategori, tutup kasir) bisa datang setelah form dibuka — segarkan pilihan
+// tanpa menghapus isian kasir.
+let tkNtDisentuh = false;
+document.getElementById('tk-nontunai').addEventListener('change', () => { tkNtDisentuh = true; });
+function tkSegarkanForm() {
+  if (!tkFormSiap) return;
+  document.querySelectorAll('#tk-nontunai .tk-nt-rek').forEach(sel => { sel.innerHTML = opsiRekening(sel.value); });
+  document.querySelectorAll('#tk-rincian .tk-baris').forEach(row => {
+    const arah = row.querySelector('.tk-rc-arah').value, kat = row.querySelector('.tk-rc-kat');
+    kat.innerHTML = opsiKategoriTk(arah, kat.value || (arah === 'keluar' ? 'operasional' : ''));
+  });
+  if (!tkEditTgl) {
+    if (!tkNtDisentuh && bacaNonTunai().every(m => !m.jumlah)) {
+      document.getElementById('tk-nontunai').innerHTML = '';
+      metodeDefault().forEach(tambahBarisNonTunai);
+    }
+    isiModalAwal();
+    isiDatalistKet();
+  }
+  hitungTk();
+}
