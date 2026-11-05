@@ -4524,7 +4524,17 @@ function hitungTk() {
     const ket = d.selisih === 0 ? 'pas ✅' : d.selisih > 0 ? 'lebih' : 'kurang';
     html += `<tr class="tk-garis" style="color:${warna}"><td>Selisih (${ket})</td><td>${d.selisih === 0 ? 'Rp 0' : rpTanda(d.selisih)}</td></tr>`;
   }
-  box.innerHTML = html + '</table>';
+  html += '</table>';
+  // Setoran normal = uang tunai hasil hari ini (sama dengan baris "Tunai" di struk); modal tetap di laci.
+  // Setor lebih → kelebihannya diambil dari modal laci; setor kurang → sisanya menambah modal laci.
+  const tunaiHariIni = d.tunaiBersih + d.rincianNet;
+  if (d.setoran && d.setoran !== tunaiHariIni) {
+    const beda = d.setoran - tunaiHariIni;
+    html += `<div class="tk-cek tk-beda" style="margin-top:8px">ℹ️ Tunai hari ini (baris "Tunai" di struk): ${rupiah(tunaiHariIni)}. Disetor ${beda > 0 ? 'lebih' : 'kurang'} ${rupiah(Math.abs(beda))} → ${beda > 0 ? 'diambil dari' : 'menambah'} modal laci (${rupiah(d.modalAwal)} → ${rupiah(d.seharusnya)}).</div>`;
+  } else if (d.setoran) {
+    html += `<div class="tk-cek tk-ok" style="margin-top:8px">✅ Setoran = tunai hari ini (${rupiah(tunaiHariIni)}), modal laci tetap ${rupiah(d.modalAwal)}.</div>`;
+  }
+  box.innerHTML = html;
   document.getElementById('tk-alasan-selisih-wrap').style.display = d.uangFisikDiisi && d.selisih !== 0 ? '' : 'none';
 }
 
@@ -4739,7 +4749,8 @@ function detailTkHtml(t) {
       ${baris('<b>Struk</b>', `<b>${rpTanda(Number(t.kmkStruk || 0))}</b>`)}
     </table>${t.alasanBedaStruk ? `<div class="tk-cek tk-beda">Beda dengan struk: ${esc(t.alasanBedaStruk)}</div>` : ''}</div>
     <div><h4>Laci</h4><table>
-      ${baris('Modal awal', rupiah(t.modalAwal))}${baris('Setoran (UL)', rupiah(t.setoran))}
+      ${baris('Modal awal', rupiah(t.modalAwal))}
+      ${(() => { const th = Number(t.penjualanTunai || 0) - Number(t.returTunai || 0) + (t.rincian || []).reduce((a, r) => a + (r.arah === 'masuk' ? 1 : -1) * Number(r.jumlah || 0), 0); const b = Number(t.setoran || 0) - th; return baris('Tunai hari ini (struk)', rupiah(th)) + baris('Setoran (UL)', rupiah(t.setoran) + (b ? ` <span class="text-muted-sm">(${b > 0 ? 'lebih' : 'kurang'} ${rupiah(Math.abs(b))}, ${b > 0 ? 'dari' : 'ke'} modal)</span>` : '')); })()}
       ${baris('Seharusnya di laci', rupiah(t.seharusnya))}${baris('Uang fisik', rupiah(t.uangFisik))}
       ${baris('Selisih', t.selisih ? rpTanda(t.selisih) : 'Rp 0')}
     </table>${t.alasanSelisih ? `<div class="tk-cek tk-beda">Alasan selisih: ${esc(t.alasanSelisih)}</div>` : ''}
