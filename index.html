@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Laporan Keuangan Toko Harmonis Sentral</title>
-  <link rel="stylesheet" href="style.css?v=20261105a" />
+  <link rel="stylesheet" href="style.css?v=20261105b" />
 </head>
 <body>
 
@@ -361,9 +361,11 @@
         </div>
 
         <h3 class="section-title">Riwayat Transaksi Kas</h3>
-        <div class="filter-bar">
+        <div class="filter-bar kas-filter">
+          <input type="search" id="filter-kas-cari" placeholder="🔍 Cari keterangan / supplier / jumlah" autocomplete="off" />
           <input type="month" id="filter-kas-bulan" title="Filter per bulan" />
-          <input type="date" id="filter-kas-tgl" title="Filter per hari" />
+          <label class="kas-f-tgl">Dari <input type="date" id="filter-kas-tgl" title="Tanggal (atau awal rentang)" /></label>
+          <label class="kas-f-tgl">s/d <input type="date" id="filter-kas-sampai" title="Akhir rentang (kosongkan untuk satu hari)" /></label>
           <button class="btn-outline" id="btn-kas-hari-ini" type="button">Hari ini</button>
           <select id="filter-kas-sumber" title="Filter per sumber dana"><option value="">Semua Sumber</option></select>
           <select id="filter-kas-jenis">
@@ -371,8 +373,20 @@
             <option value="pemasukan">Pemasukan</option>
             <option value="pengeluaran">Pengeluaran</option>
           </select>
+          <select id="filter-kas-kategori" title="Filter per kategori"><option value="">Semua Kategori</option></select>
+          <select id="filter-kas-oleh" title="Diinput oleh"><option value="">Semua Penginput</option></select>
+          <select id="filter-kas-asal" title="Asal entri">
+            <option value="">Semua Asal</option>
+            <option value="manual">Input manual</option>
+            <option value="tutup">Tutup Kasir</option>
+            <option value="beli">Bayar pembelian</option>
+            <option value="pengajuan">Pengajuan</option>
+            <option value="piutang">Piutang</option>
+          </select>
           <button class="btn-outline" id="btn-filter-kas">Filter</button>
           <button class="btn-outline" id="btn-reset-kas" type="button">Semua</button>
+          <button class="btn-outline" id="btn-export-kas" type="button">⬇️ Excel</button>
+          <span id="kas-filter-info" class="text-muted-sm"></span>
         </div>
         <div class="table-wrap">
           <table id="tbl-kasir">
@@ -1313,6 +1327,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261105e"></script>
+  <script type="module" src="app.js?v=20261105f"></script>
 </body>
 </html>

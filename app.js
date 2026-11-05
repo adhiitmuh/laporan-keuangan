@@ -315,6 +315,16 @@ function applyRoleUI(role) {
   const btnMutasi = document.getElementById('btn-simpan-mutasi');
   if (btnMutasi) btnMutasi.textContent = role === 'developer' ? 'Simpan Transfer' : 'Ajukan Transfer ke Adi';
 
+  // Filter lanjutan riwayat kas (cari, per hari/rentang, sumber, kategori, penginput, asal, Excel) — hanya Owner & pengurus
+  const filterLanjut = ['developer', 'pengurus'].includes(role);
+  ['filter-kas-cari', 'btn-kas-hari-ini', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal', 'btn-reset-kas', 'btn-export-kas', 'kas-filter-info']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = filterLanjut ? '' : 'none'; });
+  document.querySelectorAll('.kas-f-tgl').forEach(el => { el.style.display = filterLanjut ? '' : 'none'; });
+  if (!filterLanjut) {
+    ['filter-kas-cari', 'filter-kas-tgl', 'filter-kas-sampai', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  }
+
   const kasirLihatSaja = role === 'pengurus';
   ['form-kasir-wrap', 'kasir-antrian-wrap'].forEach(id => {
     const el = document.getElementById(id);
@@ -590,6 +600,7 @@ function startListeners() {
   // kasir
   unsubs.push(onSnap(query(collection(db, 'lk_kasir'), orderBy('tgl', 'desc')), snap => {
     kasirData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    isiFilterKasLain();
     renderKasir();
     renderSupplier();
     renderDashboard();
@@ -686,6 +697,7 @@ function startListeners() {
     }
     populateKategoriSelect();
     populatePengajuanKategoriSelect();
+    isiFilterKasLain();
     renderPendingKategori();
     tkSegarkanForm();
     renderKategoriAktif();
@@ -1663,12 +1675,9 @@ document.getElementById('kas-via').addEventListener('change', function () {
 function renderKasir(filter = kasirFilter) {
   const tbody = document.getElementById('tbody-kasir');
   if (!tbody) return;
-  let data = [...kasirData];
-  if (filter.tgl) data = data.filter(k => k.tgl === filter.tgl);
-  else if (filter.bulan) data = data.filter(k => monthOf(k.tgl) === filter.bulan);
-  if (filter.jenis) data = data.filter(k => k.jenis === filter.jenis);
-  if (filter.sumber) data = data.filter(k => cocokSumberKas(k, filter.sumber));
-  data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
+  const data = dataKasTersaring(filter);
+  const info = document.getElementById('kas-filter-info');
+  if (info) info.textContent = Object.values(filter).some(Boolean) ? `${data.length} transaksi sesuai filter` : '';
 
   let masuk = 0, keluar = 0;
 
@@ -1905,6 +1914,49 @@ document.getElementById('btn-simpan-semua-kas').addEventListener('click', async 
   }
 });
 
+// Data riwayat kas sesuai semua filter (dipakai tabel & export Excel)
+const asalKas = k => k.sumberTutupKasir ? 'tutup' : k.autoFromBeli ? 'beli' : k.sumberPengajuanId ? 'pengajuan'
+  : (k.sumberPiutangId || k.kategori === 'piutang') ? 'piutang' : 'manual';
+const namaPenginput = k => nm(k.inputByNama || k.inputBy || '') || '-';
+function dataKasTersaring(f = kasirFilter) {
+  let data = [...kasirData];
+  if (f.tgl && f.sampai) {
+    const [a, b] = f.tgl <= f.sampai ? [f.tgl, f.sampai] : [f.sampai, f.tgl];
+    data = data.filter(k => k.tgl >= a && k.tgl <= b);
+  } else if (f.tgl) data = data.filter(k => k.tgl === f.tgl);
+  else if (f.bulan) data = data.filter(k => monthOf(k.tgl) === f.bulan);
+  if (f.jenis)    data = data.filter(k => k.jenis === f.jenis);
+  if (f.sumber)   data = data.filter(k => cocokSumberKas(k, f.sumber));
+  if (f.kategori) data = data.filter(k => k.kategori === f.kategori);
+  if (f.oleh)     data = data.filter(k => namaPenginput(k) === f.oleh);
+  if (f.asal)     data = data.filter(k => asalKas(k) === f.asal);
+  if (f.cari) {
+    const q = f.cari.toLowerCase().trim();
+    const qAngka = q.replace(/[^0-9]/g, '');
+    data = data.filter(k => [k.ket, k.supplierId ? supplierName(k.supplierId) : '', getKategoriLabel(k.kategori), namaPenginput(k), labelVia(k)]
+      .some(t => String(t || '').toLowerCase().includes(q)) || (qAngka.length >= 3 && String(k.jumlah || '').includes(qAngka)));
+  }
+  return data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
+}
+function isiFilterKasLain() {
+  const kat = document.getElementById('filter-kas-kategori');
+  if (kat) {
+    const v = kat.value;
+    const dipakai = new Set(kasirData.map(k => k.kategori));
+    const list = [...new Map([...approvedKategori().map(k => [k.key, k.label]), ...[...dipakai].map(k => [k, getKategoriLabel(k)])]).entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]));
+    kat.innerHTML = '<option value="">Semua Kategori</option>' + list.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join('');
+    kat.value = [...kat.options].some(o => o.value === v) ? v : '';
+  }
+  const oleh = document.getElementById('filter-kas-oleh');
+  if (oleh) {
+    const v = oleh.value;
+    const nama = [...new Set(kasirData.map(namaPenginput))].filter(n => n !== '-').sort();
+    oleh.innerHTML = '<option value="">Semua Penginput</option>' + nama.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    oleh.value = [...oleh.options].some(o => o.value === v) ? v : '';
+  }
+}
+
 // Filter sumber dana: tunai, laci kasir, semua transfer, semua QRIS, atau satu rekening
 function cocokSumberKas(k, f) {
   if (f === 'tunai')    return isTunai(k);
@@ -1930,6 +1982,11 @@ document.getElementById('filter-kas-sumber').addEventListener('change', () => te
 function terapkanFilterKas() {
   renderKasir(kasirFilter = {
     sumber: document.getElementById('filter-kas-sumber').value,
+    sampai: document.getElementById('filter-kas-sampai').value,
+    kategori: document.getElementById('filter-kas-kategori').value,
+    oleh: document.getElementById('filter-kas-oleh').value,
+    asal: document.getElementById('filter-kas-asal').value,
+    cari: document.getElementById('filter-kas-cari').value,
     tgl:   document.getElementById('filter-kas-tgl').value,
     bulan: document.getElementById('filter-kas-bulan').value,
     jenis: document.getElementById('filter-kas-jenis').value,
@@ -1942,17 +1999,41 @@ document.getElementById('filter-kas-tgl').addEventListener('change', e => {
 });
 document.getElementById('filter-kas-bulan').addEventListener('change', () => {
   document.getElementById('filter-kas-tgl').value = '';
+  document.getElementById('filter-kas-sampai').value = '';
   terapkanFilterKas();
 });
 document.getElementById('filter-kas-jenis').addEventListener('change', terapkanFilterKas);
+['filter-kas-sampai', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal'].forEach(id =>
+  document.getElementById(id).addEventListener('change', terapkanFilterKas));
+let _cariKasT = null;
+document.getElementById('filter-kas-cari').addEventListener('input', () => { clearTimeout(_cariKasT); _cariKasT = setTimeout(terapkanFilterKas, 200); });
+document.getElementById('btn-export-kas').addEventListener('click', () => {
+  if (typeof XLSX === 'undefined') { toast('Library Excel belum termuat, coba muat ulang halaman', 'error'); return; }
+  const data = dataKasTersaring();
+  if (!data.length) { toast('Tidak ada transaksi sesuai filter', 'error'); return; }
+  const asalLabel = { manual: 'Manual', tutup: 'Tutup Kasir', beli: 'Bayar pembelian', pengajuan: 'Pengajuan', piutang: 'Piutang' };
+  const rows = data.map(k => ({ Tanggal: k.tgl, Jenis: k.jenis === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran',
+    Kategori: getKategoriLabel(k.kategori), Supplier: k.supplierId ? supplierName(k.supplierId) : '',
+    Masuk: k.jenis === 'pemasukan' ? Number(k.jumlah || 0) : '', Keluar: k.jenis === 'pengeluaran' ? Number(k.jumlah || 0) : '',
+    Sumber: labelVia(k), Keterangan: k.ket || '', 'Diinput Oleh': namaPenginput(k), Asal: asalLabel[asalKas(k)] }));
+  const masuk = data.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  const keluar = data.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
+  rows.push({}, { Tanggal: 'TOTAL', Masuk: masuk, Keluar: keluar }, { Tanggal: 'SALDO', Masuk: masuk - keluar });
+  const f = kasirFilter;
+  const periode = f.tgl && f.sampai ? `${f.tgl}_sd_${f.sampai}` : f.tgl || f.bulan || 'semua';
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Transaksi Kas');
+  XLSX.writeFile(wb, `Transaksi_Kas_${periode}.xlsx`);
+});
 document.getElementById('btn-kas-hari-ini').addEventListener('click', () => {
   const t = tglLokal();
   document.getElementById('filter-kas-tgl').value = t;
   document.getElementById('filter-kas-bulan').value = t.slice(0, 7);
+  document.getElementById('filter-kas-sampai').value = '';
   terapkanFilterKas();
 });
 document.getElementById('btn-reset-kas').addEventListener('click', () => {
-  ['filter-kas-tgl', 'filter-kas-bulan', 'filter-kas-jenis', 'filter-kas-sumber'].forEach(id => { document.getElementById(id).value = ''; });
+  ['filter-kas-tgl', 'filter-kas-sampai', 'filter-kas-bulan', 'filter-kas-jenis', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal', 'filter-kas-cari'].forEach(id => { document.getElementById(id).value = ''; });
   terapkanFilterKas();
 });
 

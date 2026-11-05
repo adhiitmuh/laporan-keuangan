@@ -646,3 +646,8 @@ tbody tr:hover { background: var(--brand-tint); }
   .tk-baris-rc > :nth-child(3) { grid-column: 1 / 3; grid-row: 2; }
   .tk-baris-rc > :nth-child(4) { grid-column: 1 / 3; grid-row: 3; }
 }
+
+.kas-filter #filter-kas-cari { min-width: 220px; flex: 1 1 220px; }
+.kas-f-tgl { display: inline-flex; align-items: center; gap: 6px; font-size: 12px !important; }
+#kas-filter-info { flex-basis: 100%; }
+@media (max-width: 600px) { .kas-filter #filter-kas-cari { flex-basis: 100%; } }
