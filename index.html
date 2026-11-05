@@ -362,13 +362,17 @@
 
         <h3 class="section-title">Riwayat Transaksi Kas</h3>
         <div class="filter-bar">
-          <input type="month" id="filter-kas-bulan" />
+          <input type="month" id="filter-kas-bulan" title="Filter per bulan" />
+          <input type="date" id="filter-kas-tgl" title="Filter per hari" />
+          <button class="btn-outline" id="btn-kas-hari-ini" type="button">Hari ini</button>
+          <select id="filter-kas-sumber" title="Filter per sumber dana"><option value="">Semua Sumber</option></select>
           <select id="filter-kas-jenis">
             <option value="">Semua Jenis</option>
             <option value="pemasukan">Pemasukan</option>
             <option value="pengeluaran">Pengeluaran</option>
           </select>
           <button class="btn-outline" id="btn-filter-kas">Filter</button>
+          <button class="btn-outline" id="btn-reset-kas" type="button">Semua</button>
         </div>
         <div class="table-wrap">
           <table id="tbl-kasir">
@@ -1309,6 +1313,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261105c"></script>
+  <script type="module" src="app.js?v=20261105e"></script>
 </body>
 </html>

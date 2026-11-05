@@ -623,6 +623,7 @@ function startListeners() {
   unsubs.push(onSnap(query(collection(db, 'lk_rekening'), orderBy('createdAt', 'asc')), snap => {
     rekening = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     populateRekeningSelects();
+    isiFilterSumberKas();
     renderRekening();
     renderDashboard();
     tkSegarkanForm();
@@ -1663,8 +1664,10 @@ function renderKasir(filter = kasirFilter) {
   const tbody = document.getElementById('tbody-kasir');
   if (!tbody) return;
   let data = [...kasirData];
-  if (filter.bulan) data = data.filter(k => monthOf(k.tgl) === filter.bulan);
+  if (filter.tgl) data = data.filter(k => k.tgl === filter.tgl);
+  else if (filter.bulan) data = data.filter(k => monthOf(k.tgl) === filter.bulan);
   if (filter.jenis) data = data.filter(k => k.jenis === filter.jenis);
+  if (filter.sumber) data = data.filter(k => cocokSumberKas(k, filter.sumber));
   data.sort((a, b) => String(b.tgl).localeCompare(String(a.tgl)));
 
   let masuk = 0, keluar = 0;
@@ -1902,11 +1905,55 @@ document.getElementById('btn-simpan-semua-kas').addEventListener('click', async 
   }
 });
 
-document.getElementById('btn-filter-kas').addEventListener('click', () => {
+// Filter sumber dana: tunai, laci kasir, semua transfer, semua QRIS, atau satu rekening
+function cocokSumberKas(k, f) {
+  if (f === 'tunai')    return isTunai(k);
+  if (f === 'laci')     return k.via === 'laci';
+  if (f === 'transfer') return k.via === 'transfer';
+  if (f === 'qris')     return k.via === 'qris';
+  if (f.startsWith('rek:')) return k.rekeningId === f.slice(4) && !isTunai(k) && k.via !== 'laci';
+  return true;
+}
+function isiFilterSumberKas() {
+  const sel = document.getElementById('filter-kas-sumber');
+  if (!sel) return;
+  const v = sel.value;
+  sel.innerHTML = '<option value="">Semua Sumber</option><option value="tunai">Tunai</option><option value="laci">Laci Kasir</option>'
+    + '<option value="transfer">Semua Transfer</option><option value="qris">Semua QRIS</option>'
+    + (rekening.length ? '<optgroup label="Per rekening">' + rekening.map(r => `<option value="rek:${esc(r.id)}">${esc(r.nama)} (${esc(r.bank)})</option>`).join('') + '</optgroup>' : '');
+  sel.value = [...sel.options].some(o => o.value === v) ? v : '';
+}
+isiFilterSumberKas();
+document.getElementById('filter-kas-sumber').addEventListener('change', () => terapkanFilterKas());
+
+// Filter riwayat kas: per hari (tanggal) atau per bulan — tanggal diutamakan bila diisi
+function terapkanFilterKas() {
   renderKasir(kasirFilter = {
+    sumber: document.getElementById('filter-kas-sumber').value,
+    tgl:   document.getElementById('filter-kas-tgl').value,
     bulan: document.getElementById('filter-kas-bulan').value,
     jenis: document.getElementById('filter-kas-jenis').value,
   });
+}
+document.getElementById('btn-filter-kas').addEventListener('click', terapkanFilterKas);
+document.getElementById('filter-kas-tgl').addEventListener('change', e => {
+  if (e.target.value) document.getElementById('filter-kas-bulan').value = e.target.value.slice(0, 7);
+  terapkanFilterKas();
+});
+document.getElementById('filter-kas-bulan').addEventListener('change', () => {
+  document.getElementById('filter-kas-tgl').value = '';
+  terapkanFilterKas();
+});
+document.getElementById('filter-kas-jenis').addEventListener('change', terapkanFilterKas);
+document.getElementById('btn-kas-hari-ini').addEventListener('click', () => {
+  const t = tglLokal();
+  document.getElementById('filter-kas-tgl').value = t;
+  document.getElementById('filter-kas-bulan').value = t.slice(0, 7);
+  terapkanFilterKas();
+});
+document.getElementById('btn-reset-kas').addEventListener('click', () => {
+  ['filter-kas-tgl', 'filter-kas-bulan', 'filter-kas-jenis', 'filter-kas-sumber'].forEach(id => { document.getElementById(id).value = ''; });
+  terapkanFilterKas();
 });
 
 // Entri otomatis (bayar supplier, pengajuan) tidak bisa diedit penuh supaya tetap sesuai sumbernya,
