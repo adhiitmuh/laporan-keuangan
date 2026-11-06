@@ -319,7 +319,7 @@ function applyRoleUI(role) {
   const filterLanjut = ['developer', 'pengurus'].includes(role);
   ['filter-kas-cari', 'btn-kas-hari-ini', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal', 'btn-reset-kas', 'btn-export-kas', 'btn-export-rek', 'kas-filter-info']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = filterLanjut ? '' : 'none'; });
-  document.querySelectorAll('.kas-f-tgl').forEach(el => { el.style.display = filterLanjut ? '' : 'none'; });
+  document.querySelectorAll('.kas-f-tgl:not(.kas-f-bulan)').forEach(el => { el.style.display = filterLanjut ? '' : 'none'; });
   if (!filterLanjut) {
     ['filter-kas-cari', 'filter-kas-tgl', 'filter-kas-sampai', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });

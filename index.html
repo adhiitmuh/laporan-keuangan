@@ -363,7 +363,7 @@
         <h3 class="section-title">Riwayat Transaksi Kas</h3>
         <div class="filter-bar kas-filter">
           <input type="search" id="filter-kas-cari" placeholder="🔍 Cari keterangan / supplier / jumlah" autocomplete="off" />
-          <input type="month" id="filter-kas-bulan" title="Filter per bulan" />
+          <label class="kas-f-tgl kas-f-bulan">Bulan <input type="month" id="filter-kas-bulan" title="Filter per bulan" /></label>
           <label class="kas-f-tgl">Dari <input type="date" id="filter-kas-tgl" title="Tanggal (atau awal rentang)" /></label>
           <label class="kas-f-tgl">s/d <input type="date" id="filter-kas-sampai" title="Akhir rentang (kosongkan untuk satu hari)" /></label>
           <button class="btn-outline" id="btn-kas-hari-ini" type="button">Hari ini</button>
@@ -1328,6 +1328,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261106a"></script>
+  <script type="module" src="app.js?v=20261106b"></script>
 </body>
 </html>
