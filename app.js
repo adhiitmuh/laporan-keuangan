@@ -317,7 +317,7 @@ function applyRoleUI(role) {
 
   // Filter lanjutan riwayat kas (cari, per hari/rentang, sumber, kategori, penginput, asal, Excel) — hanya Owner & pengurus
   const filterLanjut = ['developer', 'pengurus'].includes(role);
-  ['filter-kas-cari', 'btn-kas-hari-ini', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal', 'btn-reset-kas', 'btn-export-kas', 'kas-filter-info']
+  ['filter-kas-cari', 'btn-kas-hari-ini', 'filter-kas-sumber', 'filter-kas-kategori', 'filter-kas-oleh', 'filter-kas-asal', 'btn-reset-kas', 'btn-export-kas', 'btn-export-rek', 'kas-filter-info']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = filterLanjut ? '' : 'none'; });
   document.querySelectorAll('.kas-f-tgl').forEach(el => { el.style.display = filterLanjut ? '' : 'none'; });
   if (!filterLanjut) {
@@ -5045,3 +5045,93 @@ function tkSegarkanForm() {
   }
   hitungTk();
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Excel per Rekening — untuk mencocokkan dengan rekening koran / mutasi bank.
+// Satu file: Ringkasan, Harian (masuk/keluar per tanggal per rekening), lalu satu sheet per
+// rekening berisi semua pergerakan + saldo berjalan. Saldo dihitung sama seperti Dashboard:
+// kas (pemasukan/pengeluaran), transfer internal, dan setoran Tutup Kasir (laci → tunai).
+// ═══════════════════════════════════════════════════════════════════════════════
+function bukuPerRekening() {
+  const akun = [
+    { key: 'tunai', nama: 'Tunai', awal: saldoAwalTunai },
+    ...rekening.map(r => ({ key: r.id, nama: `${r.nama} (${r.bank})`, awal: Number(r.saldoAwal || 0) })),
+    ...(tkData.length ? [{ key: 'laci', nama: 'Laci Kasir', awal: tkSaldoAwalLaci() }] : []),
+  ];
+  const namaAkun = k => akun.find(a => a.key === k)?.nama || (k === 'tunai' ? 'Tunai' : rekeningName(k));
+  const gerak = Object.fromEntries(akun.map(a => [a.key, []]));
+  const tambah = (k, g) => { if (gerak[k]) gerak[k].push(g); };
+  const urut = v => v?.toMillis ? v.toMillis() : (v instanceof Date ? v.getTime() : 0);
+  kasirData.forEach(k => {
+    const akunK = k.via === 'laci' ? 'laci' : isTunai(k) ? 'tunai' : k.rekeningId;
+    const n = Number(k.jumlah || 0);
+    const asal = { manual: 'Kas manual', tutup: 'Tutup Kasir', beli: 'Bayar pembelian', pengajuan: 'Pengajuan', piutang: 'Piutang' }[asalKas(k)];
+    tambah(akunK, { tgl: k.tgl, ket: [k.ket, k.supplierId ? supplierName(k.supplierId) : ''].filter(Boolean).join(' · '),
+      kategori: getKategoriLabel(k.kategori), masuk: k.jenis === 'pemasukan' ? n : 0, keluar: k.jenis === 'pemasukan' ? 0 : n,
+      asal, oleh: namaPenginput(k), t: urut(k.createdAt) });
+  });
+  mutasiData.forEach(m => {
+    const n = Number(m.jumlah || 0);
+    tambah(m.dari, { tgl: m.tgl, ket: `Transfer ke ${m.keLabel || namaAkun(m.ke)}${m.ket ? ' · ' + m.ket : ''}`, kategori: 'Transfer internal', masuk: 0, keluar: n, asal: 'Transfer', oleh: nm(m.inputByNama || ''), t: urut(m.createdAt) });
+    tambah(m.ke, { tgl: m.tgl, ket: `Transfer dari ${m.dariLabel || namaAkun(m.dari)}${m.ket ? ' · ' + m.ket : ''}`, kategori: 'Transfer internal', masuk: n, keluar: 0, asal: 'Transfer', oleh: nm(m.inputByNama || ''), t: urut(m.createdAt) });
+  });
+  tkData.forEach(t => {
+    const n = tkSetoranBersih(t);
+    if (!n) return;
+    tambah('laci', { tgl: t.tgl, ket: `Setoran kasir (UL) tutup kasir ${t.tgl}`, kategori: 'Setoran kasir', masuk: n < 0 ? -n : 0, keluar: n > 0 ? n : 0, asal: 'Tutup Kasir', oleh: t.inputByNama || '', t: 9e15 });
+    if (t.status === 'diterima') {
+      const tglTerima = t.diterimaAt?.toDate ? tglLokal(t.diterimaAt.toDate()) : t.tgl;
+      tambah('tunai', { tgl: tglTerima, ket: `Setoran kasir (UL) tutup kasir ${t.tgl} — diterima ${t.diterimaNama || ''}`, kategori: 'Setoran kasir', masuk: n > 0 ? n : 0, keluar: n < 0 ? -n : 0, asal: 'Tutup Kasir', oleh: t.diterimaNama || '', t: urut(t.diterimaAt) });
+    }
+  });
+  Object.values(gerak).forEach(l => l.sort((a, b) => String(a.tgl).localeCompare(String(b.tgl)) || a.t - b.t));
+  return { akun, gerak };
+}
+
+document.getElementById('btn-export-rek').addEventListener('click', () => {
+  if (typeof XLSX === 'undefined') { toast('Library Excel belum termuat, coba muat ulang halaman', 'error'); return; }
+  const f = kasirFilter || {};
+  let dari = '', sampai = '';
+  if (f.tgl && f.sampai) [dari, sampai] = f.tgl <= f.sampai ? [f.tgl, f.sampai] : [f.sampai, f.tgl];
+  else if (f.tgl) dari = sampai = f.tgl;
+  else if (f.bulan) { dari = f.bulan + '-01'; sampai = f.bulan + '-31'; }
+  const dalam = g => (!dari || g.tgl >= dari) && (!sampai || g.tgl <= sampai);
+  const { akun, gerak } = bukuPerRekening();
+  const wb = XLSX.utils.book_new();
+  const ringkas = [], perHari = new Map(), sheets = [];
+  akun.forEach(a => {
+    const semua = gerak[a.key];
+    const awalPeriode = a.awal + semua.filter(g => dari && g.tgl < dari).reduce((s, g) => s + g.masuk - g.keluar, 0);
+    const list = semua.filter(dalam);
+    let saldo = awalPeriode;
+    const rows = [{ Tanggal: dari || '', Keterangan: dari ? 'Saldo awal periode' : 'Saldo awal', Kategori: '', Masuk: '', Keluar: '', Saldo: awalPeriode }];
+    list.forEach(g => {
+      saldo += g.masuk - g.keluar;
+      rows.push({ Tanggal: g.tgl, Keterangan: g.ket, Kategori: g.kategori, Masuk: g.masuk || '', Keluar: g.keluar || '', Saldo: saldo, Asal: g.asal, 'Diinput Oleh': g.oleh });
+      const h = perHari.get(g.tgl) || {}; h[a.key] = h[a.key] || { m: 0, k: 0 }; h[a.key].m += g.masuk; h[a.key].k += g.keluar; perHari.set(g.tgl, h);
+    });
+    const masuk = list.reduce((s, g) => s + g.masuk, 0), keluar = list.reduce((s, g) => s + g.keluar, 0);
+    rows.push({}, { Tanggal: 'TOTAL', Masuk: masuk, Keluar: keluar, Saldo: saldo });
+    ringkas.push({ Rekening: a.nama, 'Saldo Awal': awalPeriode, Masuk: masuk, Keluar: keluar, 'Saldo Akhir': saldo, 'Jumlah Transaksi': list.length });
+    sheets.push([a.nama, rows]);
+  });
+  ringkas.push({}, { Rekening: 'TOTAL', 'Saldo Awal': ringkas.reduce((s, r) => s + (r['Saldo Awal'] || 0), 0), Masuk: ringkas.reduce((s, r) => s + (r.Masuk || 0), 0),
+    Keluar: ringkas.reduce((s, r) => s + (r.Keluar || 0), 0), 'Saldo Akhir': ringkas.reduce((s, r) => s + (r['Saldo Akhir'] || 0), 0) });
+  const info = [{ Rekening: `Periode: ${dari ? `${dari} s/d ${sampai}` : 'semua data'} · dibuat ${new Date().toLocaleString('id-ID')}` }];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([...ringkas, {}, ...info]), 'Ringkasan');
+  const harian = [...perHari.keys()].sort().map(tgl => {
+    const r = { Tanggal: tgl };
+    akun.forEach(a => { const v = perHari.get(tgl)[a.key]; r[`${a.nama} Masuk`] = v?.m || ''; r[`${a.nama} Keluar`] = v?.k || ''; });
+    return r;
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(harian.length ? harian : [{ Tanggal: 'Tidak ada transaksi' }]), 'Harian');
+  const dipakai = new Set(['Ringkasan', 'Harian']);
+  sheets.forEach(([nama, rows]) => {
+    let n = nama.replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31).trim() || 'Rekening';
+    for (let i = 2; dipakai.has(n); i++) n = n.slice(0, 28) + ' ' + i;
+    dipakai.add(n);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), n);
+  });
+  XLSX.writeFile(wb, `Per_Rekening_${dari ? (dari === sampai ? dari : `${dari}_sd_${sampai}`) : 'semua'}.xlsx`);
+});
