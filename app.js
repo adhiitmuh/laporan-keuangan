@@ -569,13 +569,33 @@ onAuthStateChanged(auth, async (firebaseUser) => {
 // Realtime listeners (onSnapshot)
 // ═══════════════════════════════════════════════════════════════════════════════
 // onSnapshot dengan pesan error — tanpa ini, data yang gagal dimuat terlihat seperti kosong
-function onSnap(ref, cb) {
-  return onSnapshot(ref, cb, err => {
-    console.error('Listener gagal:', err);
-    toast(err.code === 'permission-denied'
-      ? 'Gagal memuat data: akun Anda tidak punya izin akses'
-      : 'Gagal memuat data: ' + err.message, 'error');
-  });
+// Listener yang gagal (jaringan putus, tab iPad lama tertidur, token kedaluwarsa) dicoba ulang otomatis.
+// `kunci` menandai data penting untuk saldo: Dashboard menunggu semuanya termuat sebelum menghitung,
+// supaya tidak tampil saldo salah (mis. Tunai minus karena saldo awal / transfer belum termuat).
+const dataSiap = new Set();
+const DATA_SALDO = ['kasir', 'rekening', 'mutasi', 'saldo-awal', 'tutup-kasir'];
+const saldoSiap = () => DATA_SALDO.every(k => dataSiap.has(k));
+function onSnap(ref, cb, kunci = null) {
+  let unsub = null, coba = 0, berhenti = false;
+  const pasang = () => {
+    unsub = onSnapshot(ref, snap => {
+      coba = 0;
+      const baru = kunci && !dataSiap.has(kunci);
+      if (kunci) dataSiap.add(kunci);
+      cb(snap);
+      if (baru && saldoSiap()) renderDashboard();
+    }, err => {
+      console.error('Listener gagal:', kunci || '', err);
+      if (berhenti) return;
+      coba++;
+      if (coba <= 6) setTimeout(() => { if (!berhenti) pasang(); }, Math.min(30000, 1000 * 2 ** coba));
+      else toast(err.code === 'permission-denied'
+        ? 'Gagal memuat data: akun Anda tidak punya izin akses'
+        : 'Gagal memuat data — muat ulang halaman', 'error');
+    });
+  };
+  pasang();
+  return () => { berhenti = true; if (unsub) unsub(); };
 }
 
 function startListeners() {
@@ -604,7 +624,7 @@ function startListeners() {
     renderKasir();
     renderSupplier();
     renderDashboard();
-  }));
+  }, 'kasir'));
 
   // tutup kasir harian
   unsubs.push(onSnap(query(collection(db, 'lk_tutup_kasir'), orderBy('tgl', 'desc')), snap => {
@@ -612,7 +632,7 @@ function startListeners() {
     renderTutupKasir();
     tkSegarkanForm();
     renderDashboard();
-  }));
+  }, 'tutup-kasir'));
 
   // users portal Harmoni — rules hanya izinkan owner membaca semua user
   if (currentUserData?.isOwner) {
@@ -638,7 +658,7 @@ function startListeners() {
     renderRekening();
     renderDashboard();
     tkSegarkanForm();
-  }));
+  }, 'rekening'));
 
   // purchase orders
   unsubs.push(onSnap(query(collection(db, 'lk_po'), orderBy('createdAt', 'desc')), snap => {
@@ -660,7 +680,7 @@ function startListeners() {
     renderDashboard();
     renderRekening();
     renderMutasi();
-  }));
+  }, 'mutasi'));
 
   // pengajuan transfer dari pengurus (belum memengaruhi saldo sampai disetujui Owner)
   unsubs.push(onSnap(query(collection(db, 'lk_pengajuan_transfer'), orderBy('createdAt', 'desc')), snap => {
@@ -729,13 +749,24 @@ function startListeners() {
     if (inputEl && !inputEl.dataset.dirty) inputEl.value = saldoAwalTunai ? formatRibuan(saldoAwalTunai) : '';
     renderDashboard();
     renderRekening();
-  }));
+  }, 'saldo-awal'));
 }
 
 function stopListeners() {
   unsubs.forEach(u => u && u());
   unsubs.length = 0;
+  dataSiap.clear();
 }
+
+// Tab yang lama tidak dibuka (iPad/HP) bisa kehilangan koneksi data — muat ulang data saat dibuka lagi
+let _tabDisembunyikan = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { _tabDisembunyikan = Date.now(); return; }
+  if (_tabDisembunyikan && Date.now() - _tabDisembunyikan > 5 * 60 * 1000 && currentUser) {
+    _tabDisembunyikan = 0;
+    startListeners();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Helper: supplier name & stats
@@ -865,6 +896,13 @@ function populateSupplierSelects() {
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 function renderDashboard() {
+  // Jangan hitung saldo sebelum kas, rekening, transfer, saldo awal & tutup kasir termuat semua
+  if (!saldoSiap()) {
+    ['dash-pemasukan', 'dash-pengeluaran', 'dash-saldo', 'dash-total-aset', 'dash-perlu-disiapkan', 'bw-saldo', 'bw-perlu'].forEach(id => setEl(id, '⏳ Memuat…'));
+    const tb = document.getElementById('tbody-saldo-rek');
+    if (tb) tb.innerHTML = `<tr><td colspan="3" class="empty-note">⏳ Memuat saldo… (${DATA_SALDO.filter(k => !dataSiap.has(k)).join(', ')})</td></tr>`;
+    return;
+  }
   const totalMasuk    = kasirData.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalKeluar   = kasirData.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const totalBeli     = pembelianAktif().reduce((a, p) => a + Number(p.total || 0), 0);
