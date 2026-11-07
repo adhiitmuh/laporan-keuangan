@@ -4943,7 +4943,7 @@ function detailTkHtml(t) {
     </table>${t.alasanBedaStruk ? `<div class="tk-cek tk-beda">Beda dengan struk: ${esc(t.alasanBedaStruk)}</div>` : ''}</div>
     <div><h4>Laci</h4><table>
       ${baris('Modal awal', rupiah(t.modalAwal))}
-      ${(() => { const th = Number(t.penjualanTunai || 0) - Number(t.returTunai || 0) + (t.rincian || []).reduce((a, r) => a + (r.arah === 'masuk' ? 1 : -1) * Number(r.jumlah || 0), 0); const b = Number(t.setoran || 0) - th; return baris('Tunai hari ini (struk)', rupiah(th)) + baris('Setoran (UL)', rupiah(t.setoran) + (b ? ` <span class="text-muted-sm">(${b > 0 ? 'lebih' : 'kurang'} ${rupiah(Math.abs(b))}, ${b > 0 ? 'dari' : 'ke'} modal)</span>` : '')); })()}
+      ${(() => { const th = Number(t.penjualanTunai || 0) - Number(t.returTunai || 0) + (t.rincian || []).reduce((a, r) => a + (r.arah === 'masuk' ? 1 : -1) * Number(r.jumlah || 0), 0); const b = Number(t.setoran || 0) - th; return baris('Tunai hari ini (struk)', rupiah(th)) + baris('Setoran (UL)', rupiah(t.setoran) + (b ? `<span class="text-muted-sm tk-ket">${b > 0 ? 'lebih' : 'kurang'} ${rupiah(Math.abs(b))}, ${b > 0 ? 'dari' : 'ke'} modal</span>` : '')); })()}
       ${baris('Seharusnya di laci', rupiah(t.seharusnya))}${baris('Uang fisik', rupiah(t.uangFisik))}
       ${baris('Selisih', t.selisih ? rpTanda(t.selisih) : 'Rp 0')}
     </table>${t.alasanSelisih ? `<div class="tk-cek tk-beda">Alasan selisih: ${esc(t.alasanSelisih)}</div>` : ''}

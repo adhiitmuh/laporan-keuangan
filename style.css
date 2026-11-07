@@ -632,6 +632,14 @@ tbody tr:hover { background: var(--brand-tint); }
 .badge-menunggu { background: #fef3c7; color: #b45309; }
 .badge-dikembalikan { background: #ffedd5; color: #c2410c; }
 #tbl-tk td, #tbl-tk th { white-space: nowrap; }
+/* Rincian tutup kasir boleh turun baris (angka tidak terpotong di HP) */
+#tbl-tk .tk-detail td, #tbl-tk .tk-detail-grid td { white-space: normal; }
+#tbl-tk .tk-detail-grid td:last-child { white-space: nowrap; vertical-align: top; padding-left: 10px !important; }
+.tk-detail-grid .tk-ket { display: block; white-space: normal; font-size: 11px; }
+@media (max-width: 720px) {
+  .tk-detail-grid { width: calc(100vw - 56px); grid-template-columns: 1fr; left: 8px; }
+  .tk-detail td { padding: 10px 8px !important; }
+}
 @media (max-width: 720px) {
   .tk-baris { padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
   .tk-baris-nt { grid-template-columns: 1fr 1fr 32px; }
