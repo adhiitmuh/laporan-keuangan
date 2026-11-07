@@ -4653,6 +4653,34 @@ function bacaRincian() {
 }
 
 // ── Hitung & cek otomatis ──
+// Alasan selisih/beda struk: pilihan cepat + catatan. Selisih di bawah Rp1.000 (uang receh) tidak wajib dijelaskan.
+const BATAS_ALASAN = 1000;
+const PIL_ALASAN = {
+  kmk: ['Pengeluaran belum diinput di mesin kasir', 'Salah ketik angka struk', 'Kas masuk (tambahan modal) belum dirinci', 'Lainnya'],
+  selisih: ['Kembalian kurang/lebih', 'Salah hitung uang', 'Ada transaksi belum dicatat di mesin', 'Uang dipakai belum dicatat', 'Lainnya'],
+};
+function isiPilihanAlasan() {
+  [['tk-alasan-kmk-pil', PIL_ALASAN.kmk], ['tk-alasan-selisih-pil', PIL_ALASAN.selisih]].forEach(([id, list]) => {
+    const sel = document.getElementById(id);
+    if (sel && !sel.options.length) sel.innerHTML = '<option value="">— Pilih alasan —</option>' + list.map(x => `<option>${x}</option>`).join('');
+  });
+}
+const gabungAlasan = (pil, cat) => !pil ? cat : pil === 'Lainnya' ? cat : (cat ? `${pil} — ${cat}` : pil);
+function aturAlasan(idPil, idCat, tersimpan, list) {
+  const sel = document.getElementById(idPil), cat = document.getElementById(idCat);
+  const t = String(tersimpan || '');
+  const cocok = list.find(x => x !== 'Lainnya' && t.startsWith(x));
+  sel.value = cocok || (t ? 'Lainnya' : '');
+  cat.value = cocok ? t.slice(cocok.length).replace(/^ — /, '') : t;
+}
+// Catatan "Lainnya" harus berisi penjelasan: minimal 2 kata & 8 huruf/angka (tidak boleh "-" saja)
+const catatanBerarti = c => (String(c).match(/[\p{L}\p{N}]/gu) || []).length >= 8 && String(c).trim().split(/\s+/).length >= 2;
+function cekAlasan(pil, cat, nama) {
+  if (!pil) return `Pilih alasan ${nama}`;
+  if (pil === 'Lainnya' && !catatanBerarti(cat)) return `Tulis penjelasan ${nama} (minimal 2 kata)`;
+  return '';
+}
+
 function bacaFormTk() {
   const nonTunai = bacaNonTunai().filter(m => m.label || m.jumlah);
   const rincian = bacaRincian();
@@ -4666,11 +4694,13 @@ function bacaFormTk() {
     returTunai: tkNum('tk-retur'),
     nonTunai, rincian,
     kmkStruk: parseTanda(tkVal('tk-kmk')),
-    alasanBedaStruk: tkVal('tk-alasan-kmk').trim(),
+    alasanKmkPil: tkVal('tk-alasan-kmk-pil'), alasanKmkCat: tkVal('tk-alasan-kmk').trim(),
+    alasanBedaStruk: gabungAlasan(tkVal('tk-alasan-kmk-pil'), tkVal('tk-alasan-kmk').trim()),
     setoran: tkNum('tk-setoran'),
     uangFisikDiisi: tkVal('tk-fisik').trim() !== '',
     uangFisik: tkNum('tk-fisik'),
-    alasanSelisih: tkVal('tk-alasan-selisih').trim(),
+    alasanSelPil: tkVal('tk-alasan-selisih-pil'), alasanSelCat: tkVal('tk-alasan-selisih').trim(),
+    alasanSelisih: gabungAlasan(tkVal('tk-alasan-selisih-pil'), tkVal('tk-alasan-selisih').trim()),
   };
   d.tunaiBersih = d.penjualanTunai - d.returTunai;
   d.nonTunaiTotal = nonTunai.reduce((a, m) => a + m.jumlah, 0);
@@ -4700,7 +4730,8 @@ function hitungTk() {
     cekKmk.className = 'tk-cek tk-beda';
     cekKmk.textContent = `⚠️ Rincian ${rpTanda(d.rincianNet)}, struk ${rpTanda(d.kmkStruk)} — ${kurang < 0 ? `masih ada kas keluar ${rupiah(-kurang)} yang belum dicatat` : `rincian kelebihan ${rupiah(kurang)}`}`;
   }
-  document.getElementById('tk-alasan-kmk-wrap').style.display = adaKmk && !cocok ? '' : 'none';
+  isiPilihanAlasan();
+  document.getElementById('tk-alasan-kmk-wrap').style.display = adaKmk && Math.abs(d.rincianNet - d.kmkStruk) >= BATAS_ALASAN ? '' : 'none';
 
   const baris = [
     ['Modal awal laci', d.modalAwal],
@@ -4728,7 +4759,7 @@ function hitungTk() {
     html += `<div class="tk-cek tk-ok" style="margin-top:8px">✅ Setoran = tunai hari ini (${rupiah(tunaiHariIni)}), modal laci tetap ${rupiah(d.modalAwal)}.</div>`;
   }
   box.innerHTML = html;
-  document.getElementById('tk-alasan-selisih-wrap').style.display = d.uangFisikDiisi && d.selisih !== 0 ? '' : 'none';
+  document.getElementById('tk-alasan-selisih-wrap').style.display = d.uangFisikDiisi && Math.abs(d.selisih) >= BATAS_ALASAN ? '' : 'none';
 }
 
 // Modal awal = sisa laci tutup kasir sebelumnya
@@ -4747,7 +4778,8 @@ function resetTkForm() {
   tkNtDisentuh = false;
   const tglEl = document.getElementById('tk-tgl');
   tglEl.value = tglLokal(); tglEl.disabled = false;
-  ['tk-modal', 'tk-resi', 'tk-total', 'tk-diskon', 'tk-tunai', 'tk-retur', 'tk-kmk', 'tk-alasan-kmk', 'tk-setoran', 'tk-fisik', 'tk-alasan-selisih', 'tk-foto']
+  isiPilihanAlasan();
+  ['tk-modal', 'tk-resi', 'tk-total', 'tk-diskon', 'tk-tunai', 'tk-retur', 'tk-kmk', 'tk-alasan-kmk', 'tk-setoran', 'tk-fisik', 'tk-alasan-selisih', 'tk-foto', 'tk-alasan-kmk-pil', 'tk-alasan-selisih-pil']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('tk-nontunai').innerHTML = '';
   metodeDefault().forEach(tambahBarisNonTunai);
@@ -4775,8 +4807,9 @@ function isiFormTk(t) {
   document.getElementById('tk-fisik').value = formatRibuan(t.uangFisik || 0);
   document.getElementById('tk-resi').value = t.resi || '';
   document.getElementById('tk-kmk').value = t.kmkStruk ? (t.kmkStruk < 0 ? '-' : '') + formatRibuan(Math.abs(t.kmkStruk)) : '';
-  document.getElementById('tk-alasan-kmk').value = t.alasanBedaStruk || '';
-  document.getElementById('tk-alasan-selisih').value = t.alasanSelisih || '';
+  isiPilihanAlasan();
+  aturAlasan('tk-alasan-kmk-pil', 'tk-alasan-kmk', t.alasanBedaStruk, PIL_ALASAN.kmk);
+  aturAlasan('tk-alasan-selisih-pil', 'tk-alasan-selisih', t.alasanSelisih, PIL_ALASAN.selisih);
   document.getElementById('tk-nontunai').innerHTML = '';
   (t.nonTunai || []).forEach(tambahBarisNonTunai);
   document.getElementById('tk-rincian').innerHTML = '';
@@ -4821,7 +4854,7 @@ function entriKasTutup(d, tgl) {
     jenis: r.arah === 'masuk' ? 'pemasukan' : 'pengeluaran', kategori: r.kategori, jumlah: r.jumlah, via: 'laci', rekeningId: null,
     ket: `${r.ket} (laci kasir)` }));
   if (d.selisih) list.push({ ...base, jenis: d.selisih > 0 ? 'pemasukan' : 'pengeluaran', kategori: 'lainnya', jumlah: Math.abs(d.selisih),
-    via: 'laci', rekeningId: null, ket: `Selisih kas kasir ${d.selisih > 0 ? 'lebih' : 'kurang'}: ${d.alasanSelisih}` });
+    via: 'laci', rekeningId: null, ket: `Selisih kas kasir ${d.selisih > 0 ? 'lebih' : 'kurang'}${d.alasanSelisih ? ': ' + d.alasanSelisih : ' (receh)'}` });
   return list;
 }
 
@@ -4839,8 +4872,14 @@ document.getElementById('btn-simpan-tk').addEventListener('click', async () => {
   if (d.nonTunai.some(m => m.jumlah > 0 && !m.label)) return err('Isi nama metode (cth: QRIS, TRANSFER BRI)');
   if (d.rincian.some(r => !r.ket || !r.jumlah)) return err('Lengkapi keterangan & jumlah setiap rincian (atau hapus barisnya)');
   if (d.rincian.some(r => !r.kategori)) return err('Pilih kategori setiap rincian');
-  if (d.rincianNet !== d.kmkStruk && !d.alasanBedaStruk) return err('Rincian belum cocok dengan Kas Masuk-Keluar di struk — lengkapi rinciannya atau isi alasan');
-  if (d.selisih && !d.alasanSelisih) return err('Ada selisih uang laci — isi alasannya');
+  if (Math.abs(d.rincianNet - d.kmkStruk) >= BATAS_ALASAN) {
+    const m = cekAlasan(d.alasanKmkPil, d.alasanKmkCat, 'beda dengan struk');
+    if (m) return err('Rincian belum cocok dengan Kas Masuk-Keluar di struk — ' + m);
+  }
+  if (Math.abs(d.selisih) >= BATAS_ALASAN) {
+    const m = cekAlasan(d.alasanSelPil, d.alasanSelCat, 'selisih uang laci');
+    if (m) return err('Ada selisih uang laci ' + rupiah(Math.abs(d.selisih)) + ' — ' + m);
+  }
 
   const btn = document.getElementById('btn-simpan-tk');
   btn.disabled = true; btn.textContent = 'Menyimpan…';
