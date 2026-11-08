@@ -64,6 +64,7 @@
         <button class="nav-btn nav-rekening" data-page="rekening">🏦 Rekening</button>
         <button class="nav-btn nav-piutang" data-page="piutang">💳 Piutang</button>
         <button class="nav-btn nav-transfer" data-page="transfer">🔄 Transfer</button>
+        <button class="nav-btn nav-cocokmutasi" data-page="cocokmutasi">🔎 Cocokkan Mutasi</button>
         <button class="nav-btn nav-laporan" data-page="laporan">📈 Laporan</button>
         <button class="nav-btn nav-admin" data-page="admin">⚙️ Admin</button>
       </nav>
@@ -1133,6 +1134,19 @@
       </section>
 
       <!-- ─── REKENING ──────────────────────────────────── -->
+      <section id="page-cocokmutasi" class="page">
+        <h2 class="page-title">Cocokkan Mutasi Rekening</h2>
+        <div class="form-card">
+          <p style="font-size:13px;color:#64748b;margin:0 0 10px">Upload <b>PDF e-statement / rekening koran</b> (BRImo, myBCA, Livin' Mandiri, BNI, CIMB, dll. — PDF asli dari bank, bukan foto) atau CSV/Excel mutasi. Aplikasi membandingkan dengan catatan Laporan Keuangan di rekening yang sama: per transaksi (jumlah sama, tanggal ±3 hari), lalu per hari (total harian sama — untuk QRIS/setoran yang dicatat gabungan).</p>
+          <div class="form-grid">
+            <div class="form-group"><label>Rekening di Laporan Keuangan</label><select id="cm-rek"></select></div>
+            <div class="form-group"><label>File mutasi (PDF / CSV / Excel)</label><input type="file" id="cm-file" accept=".pdf,.csv,.xls,.xlsx,application/pdf,text/csv" /></div>
+          </div>
+          <div id="cm-info" style="font-size:13px;margin-top:8px"></div>
+        </div>
+        <div id="cm-hasil"></div>
+      </section>
+
       <section id="page-rekening" class="page">
         <h2 class="page-title">Manajemen Rekening</h2>
 
@@ -1328,6 +1342,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261107a"></script>
+  <script type="module" src="app.js?v=20261108a"></script>
 </body>
 </html>
