@@ -683,6 +683,14 @@ function startListeners() {
     renderMutasi();
   }, 'mutasi'));
 
+  // Cocokkan mutasi: pengajuan pengurus & riwayat (hanya Owner & pengurus)
+  if (['developer', 'pengurus'].includes(currentRole)) {
+    unsubs.push(onSnap(query(collection(db, 'lk_cek_mutasi'), orderBy('createdAt', 'desc')), snap => {
+      cekMutasiData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderDaftarCm();
+    }));
+  }
+
   // pengajuan transfer dari pengurus (belum memengaruhi saldo sampai disetujui Owner)
   unsubs.push(onSnap(query(collection(db, 'lk_pengajuan_transfer'), orderBy('createdAt', 'desc')), snap => {
     pengajuanTransfer = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -5218,7 +5226,7 @@ document.getElementById('btn-export-rek').addEventListener('click', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // COCOKKAN MUTASI REKENING (PDF e-statement / CSV / Excel bank vs catatan Laporan Keuangan)
 // ═══════════════════════════════════════════════════════════════════════════════
-let cmBank = null, cmHasil = null, cmTab = 'bank';
+let cmBank = null, cmHasil = null, cmTab = 'bank', cmFile = null, cmDocId = null, cekMutasiData = [];
 function isiPilihanRekeningMutasi() {
   const sel = document.getElementById('cm-rek');
   if (!rekening.length) { setTimeout(() => { if (document.getElementById('page-cocokmutasi')?.classList.contains('active')) isiPilihanRekeningMutasi(); }, 800); }
@@ -5226,7 +5234,97 @@ function isiPilihanRekeningMutasi() {
   sel.innerHTML = rekening.map(r => `<option value="${esc(r.id)}">${esc(r.nama)} (${esc(r.bank)})${r.noRek ? ' · ' + esc(r.noRek) : ''}</option>`).join('');
   if (cur) sel.value = cur;
 }
-document.getElementById('cm-rek')?.addEventListener('change', () => { if (cmBank) cocokkanMutasi(); });
+document.getElementById('cm-rek')?.addEventListener('change', () => { if (!cmBank) return; if (currentRole === 'developer' || cmDocId) cocokkanMutasi(); else tampilkanSiapKirim(); });
+
+// Pengurus: hasil belum diolah — hanya ringkasan file, lalu kirim ke Adi untuk disetujui
+function ringkasBank(rows) {
+  const dari = rows.reduce((a, m) => m.tgl < a ? m.tgl : a, '9999'), sampai = rows.reduce((a, m) => m.tgl > a ? m.tgl : a, '');
+  return { n: rows.length, dari, sampai, masuk: rows.reduce((s, m) => s + (m.kredit || 0), 0), keluar: rows.reduce((s, m) => s + (m.debit || 0), 0) };
+}
+function tampilkanSiapKirim() {
+  const r = ringkasBank(cmBank);
+  document.getElementById('cm-hasil').innerHTML = '';
+  document.getElementById('cm-info').innerHTML = `✓ ${r.n} transaksi terbaca (${r.dari} s.d. ${r.sampai}) · masuk ${rupiah(r.masuk)} · keluar ${rupiah(r.keluar)}. <span style="color:#64748b">Cocokkan angka ini dengan total di file bank.</span>`;
+  document.getElementById('cm-aksi').innerHTML = `<button class="btn-primary" id="btn-cm-kirim">📤 Kirim ke Adi untuk disetujui</button>`;
+  document.getElementById('btn-cm-kirim').onclick = kirimCekMutasi;
+}
+async function unggahFileCm(f) {
+  try { const r = storageRef(storage, `cek-mutasi/${Date.now()}_${f.name.replace(/[^\w.-]/g, '_')}`); await uploadBytes(r, f); return await getDownloadURL(r); } catch { return ''; }
+}
+async function kirimCekMutasi() {
+  const btn = document.getElementById('btn-cm-kirim'); btn.disabled = true; btn.textContent = 'Mengirim…';
+  try {
+    const rekId = document.getElementById('cm-rek').value, r = ringkasBank(cmBank);
+    const fileUrl = cmFile ? await unggahFileCm(cmFile) : '';
+    await addDoc(collection(db, 'lk_cek_mutasi'), { rekeningId: rekId, rekeningNama: rekeningName(rekId), dari: r.dari, sampai: r.sampai, ringkasBank: r,
+      rows: cmBank.map(m => ({ tgl: m.tgl, ket: String(m.ket || '').slice(0, 160), kredit: m.kredit || 0, debit: m.debit || 0, saldo: m.saldo ?? null })),
+      fileNama: cmFile?.name || '', fileUrl, status: 'menunggu', createdAt: serverTimestamp(), ...inputByFields() });
+    document.getElementById('cm-aksi').innerHTML = `<div style="color:#15803d;font-weight:700">✓ Terkirim — menunggu persetujuan Adi.</div><button class="btn-outline" id="btn-cm-wa" style="margin-top:6px">📲 Kabari Adi lewat WA</button>`;
+    document.getElementById('btn-cm-wa').onclick = () => window.open('https://wa.me/?text=' + encodeURIComponent(`Assalamualaikum Pak Adi, mutasi rekening *${rekeningName(rekId)}* periode ${r.dari} s.d. ${r.sampai} (${r.n} transaksi) sudah saya unggah di Laporan Keuangan → 🔎 Cocokkan Mutasi. Mohon diperiksa & disetujui. 🙏`), '_blank');
+    cmBank = null; document.getElementById('cm-file').value = '';
+  } catch (err) { toast('Gagal mengirim: ' + err.message, 'error'); btn.disabled = false; btn.textContent = '📤 Kirim ke Adi untuk disetujui'; }
+}
+
+// Owner: tombol setujui/tolak untuk hasil yang sedang dibuka
+function tombolAksiCm() {
+  const el = document.getElementById('cm-aksi');
+  if (currentRole !== 'developer') { el.innerHTML = ''; return; }
+  const d = cmDocId && cekMutasiData.find(x => x.id === cmDocId);
+  if (d && d.status !== 'menunggu') { el.innerHTML = `<div style="font-size:13px">${d.status === 'disetujui' ? '✅ Disetujui' : '❌ Ditolak'} ${esc(d.disetujuiNama || '')}</div>`; return; }
+  el.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${d ? `<span style="font-size:13px;align-self:center">Diunggah ${esc(d.inputByNama || '')}${d.fileUrl ? ` · <a href="${esc(d.fileUrl)}" target="_blank">file asli</a>` : ''}</span>` : ''}
+    <button class="btn-primary" id="btn-cm-setuju">✅ Setujui & simpan hasil</button>${d ? '<button class="btn-outline" id="btn-cm-tolak">❌ Tolak</button>' : ''}</div>`;
+  document.getElementById('btn-cm-setuju').onclick = setujuiCm;
+  document.getElementById('btn-cm-tolak')?.addEventListener('click', tolakCm);
+}
+function ringkasHasil(h) {
+  const jm = (l, k) => l.reduce((s, x) => s + (x[k] || 0), 0);
+  return { saldoBank: h.saldoBank, saldoLk: h.saldoLk, selisih: h.saldoBank == null ? null : h.saldoLk - h.saldoBank, nCocok: h.cocok.length + h.cocokHari.length,
+    nBankSaja: h.bankSaja.length, nilaiBankSaja: jm(h.bankSaja, 'kredit') - jm(h.bankSaja, 'debit'), nLkSaja: h.lkSaja.length, nilaiLkSaja: jm(h.lkSaja, 'masuk') - jm(h.lkSaja, 'keluar') };
+}
+async function setujuiCm() {
+  if (!cmHasil) return;
+  const data = { status: 'disetujui', hasil: ringkasHasil(cmHasil), rekeningId: cmHasil.rekId, rekeningNama: cmHasil.nama, disetujuiNama: currentUserData?.nama || 'Adi', disetujuiAt: serverTimestamp() };
+  try {
+    if (cmDocId) await updateDoc(doc(db, 'lk_cek_mutasi', cmDocId), data);
+    else {
+      const r = ringkasBank(cmBank);
+      const fileUrl = cmFile ? await unggahFileCm(cmFile) : '';
+      const ref = await addDoc(collection(db, 'lk_cek_mutasi'), { ...data, dari: r.dari, sampai: r.sampai, ringkasBank: r, fileNama: cmFile?.name || '', fileUrl,
+        rows: cmBank.map(m => ({ tgl: m.tgl, ket: String(m.ket || '').slice(0, 160), kredit: m.kredit || 0, debit: m.debit || 0, saldo: m.saldo ?? null })), createdAt: serverTimestamp(), ...inputByFields() });
+      cmDocId = ref.id;
+    }
+    toast('Hasil cek mutasi disetujui & disimpan'); document.getElementById('cm-aksi').innerHTML = '<div style="color:#15803d;font-weight:700">✅ Disetujui & disimpan</div>';
+  } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+}
+async function tolakCm() {
+  const alasan = prompt('Alasan ditolak (mis. salah rekening / file tidak lengkap):'); if (!alasan) return;
+  await updateDoc(doc(db, 'lk_cek_mutasi', cmDocId), { status: 'ditolak', alasanTolak: alasan, disetujuiNama: currentUserData?.nama || 'Adi', disetujuiAt: serverTimestamp() });
+  toast('Ditolak'); document.getElementById('cm-hasil').innerHTML = ''; document.getElementById('cm-aksi').innerHTML = '';
+}
+window.bukaCm = id => {
+  const d = cekMutasiData.find(x => x.id === id); if (!d) return;
+  if (currentRole !== 'developer' && d.status !== 'disetujui') return;
+  isiPilihanRekeningMutasi();
+  cmBank = d.rows || []; cmDocId = id; cmFile = null;
+  document.getElementById('cm-rek').value = d.rekeningId;
+  cocokkanMutasi(); tombolAksiCm();
+  document.getElementById('cm-info').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+window.hapusCm = async id => { if (!confirm('Hapus pengajuan ini?')) return; await deleteDoc(doc(db, 'lk_cek_mutasi', id)); };
+function renderDaftarCm() {
+  const el = document.getElementById('cm-daftar'); if (!el) return;
+  const menunggu = cekMutasiData.filter(d => d.status === 'menunggu').length;
+  const b = document.getElementById('badge-cm');
+  if (b) { const n = currentRole === 'developer' ? menunggu : 0; b.textContent = n; b.classList.toggle('hidden', !n); b.style.display = n ? '' : 'none'; }
+  el.innerHTML = cekMutasiData.length ? `<div class="table-wrap"><table><thead><tr><th>Diunggah</th><th>Rekening</th><th>Periode</th><th>Transaksi bank</th><th>Hasil</th><th>Status</th><th></th></tr></thead><tbody>
+    ${cekMutasiData.map(d => { const h = d.hasil; const tgl = d.createdAt?.toDate ? d.createdAt.toDate().toLocaleDateString('id-ID') : '';
+      return `<tr><td>${esc(tgl)}<div style="font-size:11px;color:#64748b">${esc(d.inputByNama || '')}</div></td><td>${esc(d.rekeningNama || rekeningName(d.rekeningId))}</td><td>${esc(d.dari)} s.d. ${esc(d.sampai)}</td>
+        <td>${d.ringkasBank?.n || 0} · masuk ${rupiah(d.ringkasBank?.masuk)}</td>
+        <td style="font-size:12px">${h ? `selisih ${h.selisih == null ? '—' : (h.selisih ? `<b class="text-red">${rupiah(h.selisih)}</b>` : '<b class="text-green">✓ 0</b>')} · ❓${h.nBankSaja} · ⚠${h.nLkSaja}` : '—'}</td>
+        <td>${d.status === 'menunggu' ? '<span class="badge badge-menunggu">⏳ Menunggu Adi</span>' : d.status === 'disetujui' ? `<span class="badge badge-lunas">✅ Disetujui</span>` : `<span class="badge badge-dikembalikan">❌ Ditolak</span><div style="font-size:11px">${esc(d.alasanTolak || '')}</div>`}</td>
+        <td style="white-space:nowrap">${(currentRole === 'developer' || d.status === 'disetujui') ? `<button class="btn-sm btn-sm-gray" onclick="bukaCm('${d.id}')">${currentRole === 'developer' && d.status === 'menunggu' ? '🔍 Periksa' : 'Lihat'}</button>` : ''}
+          ${(currentRole === 'developer' || (d.inputBy === currentUser?.uid && d.status === 'menunggu')) ? `<button class="btn-sm btn-sm-gray" onclick="hapusCm('${d.id}')">✕</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<p style="font-size:13px;color:#94a3b8">Belum ada.</p>';
+}
 document.getElementById('cm-file')?.addEventListener('change', async e => {
   const f = e.target.files[0]; if (!f) return;
   isiPilihanRekeningMutasi();
@@ -5242,7 +5340,9 @@ document.getElementById('cm-file')?.addEventListener('change', async e => {
     // Tebak rekening dari nomor rekening di nama file / isi
     const no = rekening.find(r => r.noRek && f.name.replace(/\D/g, '').includes(String(r.noRek).replace(/\D/g, '')));
     if (no) document.getElementById('cm-rek').value = no.id;
-    cocokkanMutasi();
+    cmFile = f; cmDocId = null;
+    if (currentRole === 'developer') { cocokkanMutasi(); tombolAksiCm(); }
+    else tampilkanSiapKirim();
   } catch (err) { info.textContent = '⚠ Gagal membaca file: ' + err.message; }
 });
 
