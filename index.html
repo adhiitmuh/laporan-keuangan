@@ -1190,7 +1190,7 @@
               <label>No. Rekening (opsional)</label>
               <input type="text" id="rek-norek" placeholder="cth: 1234567890" />
             </div>
-            <div class="form-group">
+            <div class="form-group" id="rek-saldo-awal-wrap">
               <label>Saldo Awal (Rp)</label>
               <input type="text" inputmode="numeric" autocomplete="off" id="rek-saldo-awal" placeholder="0" />
             </div>
@@ -1214,6 +1214,10 @@
             <tbody id="tbody-rekening"></tbody>
           </table>
         </div>
+        <details id="log-privat-wrap" style="display:none;margin-top:14px" class="form-card">
+          <summary style="cursor:pointer;font-weight:700">🔒 Riwayat koreksi saldo (hanya Anda yang bisa melihat)</summary>
+          <div id="log-privat" style="margin-top:8px"></div>
+        </details>
       </section>
 
     </main>
@@ -1354,6 +1358,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261109a"></script>
+  <script type="module" src="app.js?v=20261109b"></script>
 </body>
 </html>

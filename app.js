@@ -351,6 +351,11 @@ function applyRoleUI(role) {
     const el = document.getElementById(id);
     if (el) el.style.display = showSaldo ? '' : 'none';
   });
+  // Saldo awal / koreksi saldo hanya Owner — pengurus tetap bisa menambah rekening (saldo awal 0)
+  const hanyaOwner = role === 'developer';
+  const ft = document.getElementById('form-saldo-tunai-wrap'); if (ft && !hanyaOwner) ft.style.display = 'none';
+  const fs = document.getElementById('rek-saldo-awal-wrap'); if (fs) fs.style.display = hanyaOwner ? '' : 'none';
+  const lp = document.getElementById('log-privat-wrap'); if (lp) lp.style.display = hanyaOwner ? '' : 'none';
 
   // Hide hapus buttons via CSS class on the column header (rendered dynamically too)
   document.querySelectorAll('.col-aksi').forEach(th => {
@@ -682,6 +687,15 @@ function startListeners() {
     renderRekening();
     renderMutasi();
   }, 'mutasi'));
+
+  // Catatan pribadi Owner (koreksi saldo) — tidak bisa dibaca role lain
+  if (currentRole === 'developer') {
+    unsubs.push(onSnap(query(collection(db, 'lk_log_privat'), orderBy('at', 'desc')), snap => {
+      const el = document.getElementById('log-privat'); if (!el) return;
+      const l = snap.docs.map(d => d.data());
+      el.innerHTML = l.length ? `<div class="table-wrap"><table><thead><tr><th>Waktu</th><th>Rekening</th><th>Saldo sebelum</th><th>Saldo sesudah</th><th>Selisih</th><th>Catatan</th></tr></thead><tbody>${l.map(x => `<tr><td>${x.at?.toDate ? esc(x.at.toDate().toLocaleString('id-ID')) : ''}</td><td>${esc(x.rekeningNama || '')}</td><td>${rupiah(x.saldoLama)}</td><td>${rupiah(x.saldoBaru)}</td><td class="${x.selisih < 0 ? 'text-red' : 'text-green'}">${rupiah(x.selisih)}</td><td>${esc(x.catatan || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p style="font-size:13px;color:#94a3b8">Belum ada koreksi.</p>';
+    }));
+  }
 
   // Cocokkan mutasi: pengajuan pengurus & riwayat (hanya Owner & pengurus)
   if (['developer', 'pengurus'].includes(currentRole)) {
@@ -4253,6 +4267,7 @@ function renderRekening() {
   }
   tbody.innerHTML = '';
   const bolehUbahRek = ['developer', 'pengurus'].includes(currentRole);   // sama dengan form saldo/rekening
+  const bolehUbahSaldo = currentRole === 'developer';                       // koreksi saldo hanya Owner
   rekening.forEach(r => {
     const saldoAwal   = Number(r.saldoAwal || 0);
     const mutMasuk    = mutasiData.filter(m => m.ke   === r.id).reduce((a, m) => a + Number(m.jumlah || 0), 0);
@@ -4269,7 +4284,7 @@ function renderRekening() {
       <td class="cell-saldo-awal" data-rek-id="${esc(r.id)}">
         <div class="saldo-awal-display" style="display:flex;align-items:center;gap:6px">
           <span>${rupiah(saldoAwal)}</span>
-          ${bolehUbahRek ? `<button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${esc(r.id)}" data-current="${saldoAwal}" title="Ubah saldo awal">✏️</button>` : ''}
+          ${bolehUbahSaldo ? `<button class="btn-sm btn-sm-blue" data-edit-saldo-rek="${esc(r.id)}" data-current="${saldoAwal}" data-sekarang="${saldoSkrng}" title="Koreksi saldo (hanya Owner)">✏️</button>` : ''}
         </div>
       </td>
       <td class="${saldoSkrng >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoSkrng)}</strong></td>
@@ -4284,7 +4299,10 @@ function renderRekening() {
 document.getElementById('btn-simpan-saldo-tunai').addEventListener('click', async () => {
   const val = parseRibuan(document.getElementById('saldo-awal-tunai').value) || 0;
   try {
+    const lama = saldoAwalTunai;
     await setDoc(doc(db, 'lk_settings', 'saldo-awal'), { tunai: val }, { merge: true });
+    if (val !== lama) addDoc(collection(db, 'lk_log_privat'), { jenis: 'koreksi-saldo', rekeningId: 'tunai', rekeningNama: 'Tunai (saldo awal)', saldoAwalLama: lama, saldoAwalBaru: val,
+      saldoLama: lama, saldoBaru: val, selisih: val - lama, catatan: '', oleh: currentUserData?.nama || 'Owner', at: serverTimestamp() }).catch(() => {});
     toast('Saldo awal tunai disimpan ✓');
   } catch (e) {
     toast('Gagal: ' + e.message, 'error');
@@ -4323,14 +4341,23 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
   if (editId) {
     const cell    = document.querySelector(`.cell-saldo-awal[data-rek-id="${editId}"]`);
     if (!cell || cell.querySelector('.inline-saldo-input')) return; // sudah terbuka
-    const current = Number(e.target.dataset.current) || 0;
+    const current = Number(e.target.dataset.current) || 0, sekarang = Number(e.target.dataset.sekarang) || 0;
     cell.innerHTML = `
-      <div style="display:flex;align-items:center;gap:4px">
-        <input class="inline-saldo-input" type="number" value="${current}" min="0"
-          style="width:120px;border:1.5px solid #16a34a;border-radius:6px;padding:4px 8px;font-size:13px;outline:none" />
-        <button class="btn-sm btn-sm-green" data-save-saldo-rek="${editId}">✓</button>
-        <button class="btn-sm btn-sm-red"   data-cancel-saldo-rek="${editId}">✗</button>
+      <div style="display:flex;flex-direction:column;gap:4px;min-width:220px" data-awal="${current}" data-sekarang="${sekarang}">
+        <select class="inline-saldo-mode" style="font-size:12px;padding:3px 6px">
+          <option value="sekarang">Saldo sekarang (sesuai bank)</option>
+          <option value="awal">Saldo awal</option>
+        </select>
+        <input class="inline-saldo-input" type="text" inputmode="numeric" value="${formatRibuan(sekarang)}"
+          style="width:150px;border:1.5px solid #16a34a;border-radius:6px;padding:4px 8px;font-size:13px;outline:none" />
+        <input class="inline-saldo-cat" type="text" placeholder="Catatan pribadi (opsional)" style="width:180px;font-size:12px;padding:3px 6px" />
+        <div style="display:flex;gap:4px"><button class="btn-sm btn-sm-green" data-save-saldo-rek="${editId}">✓ Simpan</button>
+        <button class="btn-sm btn-sm-red"   data-cancel-saldo-rek="${editId}">✗</button></div>
+        <small style="color:#64748b">Tidak muncul di riwayat transaksi. Catatan hanya terlihat oleh Anda.</small>
       </div>`;
+    const box = cell.firstElementChild, inp = box.querySelector('.inline-saldo-input');
+    box.querySelector('.inline-saldo-mode').addEventListener('change', ev => { inp.value = formatRibuan(ev.target.value === 'awal' ? current : sekarang); });
+    inp.addEventListener('input', () => { const n = parseRibuan(inp.value) || 0; inp.value = n ? formatRibuan(n) : ''; });
     cell.querySelector('.inline-saldo-input').focus();
     return;
   }
@@ -4339,10 +4366,17 @@ document.getElementById('tbody-rekening').addEventListener('click', async e => {
   const saveId = e.target.dataset.saveSaldoRek;
   if (saveId) {
     const cell  = document.querySelector(`.cell-saldo-awal[data-rek-id="${saveId}"]`);
-    const newVal = Number(cell?.querySelector('.inline-saldo-input')?.value) || 0;
+    const box = cell?.firstElementChild, mode = box?.querySelector('.inline-saldo-mode')?.value || 'awal';
+    const nilai = parseRibuan(box?.querySelector('.inline-saldo-input')?.value) || 0;
+    const awalLama = Number(box?.dataset.awal) || 0, sekarangLama = Number(box?.dataset.sekarang) || 0;
+    // "Saldo sekarang": geser saldo awal sebesar selisihnya, transaksi tidak berubah
+    const newVal = mode === 'sekarang' ? awalLama + (nilai - sekarangLama) : nilai;
     try {
       await updateDoc(doc(db, 'lk_rekening', saveId), { saldoAwal: newVal });
-      toast('Saldo awal diperbarui ✓');
+      if (newVal !== awalLama) await addDoc(collection(db, 'lk_log_privat'), { jenis: 'koreksi-saldo', rekeningId: saveId, rekeningNama: rekeningName(saveId),
+        saldoAwalLama: awalLama, saldoAwalBaru: newVal, saldoLama: sekarangLama, saldoBaru: sekarangLama + (newVal - awalLama), selisih: newVal - awalLama,
+        catatan: box?.querySelector('.inline-saldo-cat')?.value.trim() || '', oleh: currentUserData?.nama || 'Owner', at: serverTimestamp() }).catch(() => {});
+      toast('Saldo diperbarui ✓');
     } catch (err) {
       toast('Gagal: ' + err.message, 'error');
     }
