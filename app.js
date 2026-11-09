@@ -5075,6 +5075,7 @@ function aksiTkHtml(t) {
   }
   if (tkBisaInput() && tkBisaEdit(t)) b.push(`<button class="btn-sm btn-sm-blue" data-tk-edit="${esc(t.tgl)}">✏️</button>`);
   if (tkBisaInput() && tkBisaEdit(t)) b.push(`<button class="btn-sm btn-sm-red" data-tk-hapus="${esc(t.tgl)}">🗑</button>`);
+  if (currentRole === 'developer') b.push(`<button class="btn-sm btn-sm-gray" data-tk-modal="${esc(t.tgl)}" title="Koreksi modal awal (hanya Owner, tanpa mengubah data lain)">🔧 Modal</button>`);
   return `<div style="display:flex;gap:4px">${b.join('')}</div>`;
 }
 
@@ -5149,7 +5150,27 @@ document.getElementById('page-tutupkasir').addEventListener('click', e => {
   else if (btn.dataset.tkKembali) { const t = cari(btn.dataset.tkKembali); if (t) tkKembalikan(t); }
   else if (btn.dataset.tkEdit) { const t = cari(btn.dataset.tkEdit); if (t && tkBisaEdit(t)) isiFormTk(t); }
   else if (btn.dataset.tkHapus) { const t = cari(btn.dataset.tkHapus); if (t && tkBisaEdit(t)) tkHapus(t); }
+  else if (btn.dataset.tkModal) { const t = cari(btn.dataset.tkModal); if (t && currentRole === 'developer') koreksiModalTk(t); }
 });
+
+// Koreksi modal awal laci (Owner): hanya modal awal, "seharusnya di laci" & selisih hari itu yang dihitung ulang.
+// Status, penjualan, rincian kas, setoran & entri kas tidak disentuh; tidak ada notifikasi/riwayat yang terlihat staf.
+async function koreksiModalTk(t) {
+  const lama = Number(t.modalAwal || 0);
+  const isi = prompt(`Koreksi modal awal laci ${labelTglTk(t.tgl)}\nSekarang: ${rupiah(lama)}\n\nModal awal yang benar:`, formatRibuan(lama));
+  if (isi === null) return;
+  const baru = parseRibuan(isi);
+  if (baru === lama) return;
+  const delta = baru - lama;
+  const seharusnya = Number(t.seharusnya || 0) + delta, selisih = Number(t.uangFisik || 0) - seharusnya;
+  if (!confirm(`Modal awal ${rupiah(lama)} → ${rupiah(baru)}\nSeharusnya di laci → ${rupiah(seharusnya)}\nSelisih → ${selisih ? rpTanda(selisih) : 'pas ✓'}\n\nData lain tidak berubah. Simpan?`)) return;
+  try {
+    await updateDoc(doc(db, 'lk_tutup_kasir', t.tgl), { modalAwal: baru, seharusnya, selisih });
+    addDoc(collection(db, 'lk_log_privat'), { jenis: 'koreksi-modal-laci', rekeningId: 'laci', rekeningNama: `Modal awal laci ${t.tgl}`, saldoLama: lama, saldoBaru: baru, selisih: delta,
+      catatan: `selisih laci ${rpTanda(Number(t.selisih || 0))} → ${selisih ? rpTanda(selisih) : 'pas'}`, oleh: currentUserData?.nama || 'Owner', at: serverTimestamp() }).catch(() => {});
+    toast('Modal awal dikoreksi ✓');
+  } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+}
 document.getElementById('filter-tk-bulan').addEventListener('change', () => renderTutupKasir());
 
 document.getElementById('btn-export-tk').addEventListener('click', () => {
