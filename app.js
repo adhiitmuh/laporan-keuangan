@@ -1033,6 +1033,13 @@ function resetSupForm() {
   document.getElementById('btn-batal-sup').style.display = 'none';
 }
 
+// Pilihan filter supplier diingat per perangkat
+(() => {
+  try { const v = JSON.parse(localStorage.getItem('lk_sup_filter') || '{}');
+    if (v.fAsal) document.getElementById('sup-f-asal').value = v.fAsal; if (v.fSt) document.getElementById('sup-f-status').value = v.fSt;
+    if (v.urut) document.getElementById('sup-f-urut').value = v.urut; if (v.grup === false) document.getElementById('sup-f-grup').checked = false; } catch {}
+  ['sup-f-cari', 'sup-f-asal', 'sup-f-status', 'sup-f-urut', 'sup-f-grup'].forEach(id => document.getElementById(id)?.addEventListener(id === 'sup-f-cari' ? 'input' : 'change', () => renderSupplier()));
+})();
 function renderSupplier() {
   const tbody = document.getElementById('tbody-supplier');
   if (!tbody) return;
@@ -1042,8 +1049,33 @@ function renderSupplier() {
   }
   tbody.innerHTML = '';
   const isReadOnly = currentRole === 'pemilik';
-  suppliers.forEach(s => {
-    const st = supplierStats(s.id);
+  // Filter & urutan (halaman Supplier hanya untuk Owner & pengurus)
+  const f = id => document.getElementById(id);
+  const cari = (f('sup-f-cari')?.value || '').toLowerCase().trim(), fAsal = f('sup-f-asal')?.value || '', fSt = f('sup-f-status')?.value || ''
+  const urut = f('sup-f-urut')?.value || 'nama', grup = f('sup-f-grup')?.checked !== false;
+  try { localStorage.setItem('lk_sup_filter', JSON.stringify({ fAsal, fSt, urut, grup })); } catch {}
+  const DAERAH = ['Jawa', 'Lokal', 'Lainnya'];
+  // Data lama berisi nama kota: kota di Jawa → Jawa, "Lainnya" tetap, selain itu (Makassar, Gowa, …) → Lokal
+  const KOTA_JAWA = /jawa|jakarta|bandung|surabaya|solo|surakarta|semarang|yogya|jogja|tangerang|bekasi|bogor|depok|pekalongan|malang|sidoarjo|kudus|cirebon|tasik|garut|klaten|tegal/i;
+  const daerah = s => s.asal === 'Lainnya' ? 'Lainnya' : KOTA_JAWA.test(s.asal || '') ? 'Jawa' : 'Lokal';
+  let list = suppliers.map(s => ({ s, st: supplierStats(s.id) }))
+    .filter(({ s, st }) => (!cari || `${s.nama} ${s.jenis || ''}`.toLowerCase().includes(cari))
+      && (!fAsal || daerah(s) === fAsal) && (!fSt || (fSt === 'hutang' ? st.hutang > 0 : st.hutang <= 0)));
+  const cmp = { nama: (a, b) => String(a.s.nama).localeCompare(String(b.s.nama), 'id'), hutang: (a, b) => b.st.hutang - a.st.hutang, beli: (a, b) => b.st.totalBeli - a.st.totalBeli }[urut];
+  list.sort((a, b) => (grup ? DAERAH.indexOf(daerah(a.s)) - DAERAH.indexOf(daerah(b.s)) : 0) || cmp(a, b));
+  const jml = (l, k) => l.reduce((t, x) => t + x.st[k], 0);
+  const ring = document.getElementById('sup-ringkas');
+  if (ring) ring.innerHTML = `${list.length} supplier · total hutang <b class="text-red">${rupiah(jml(list, 'hutang'))}</b>` + (grup ? ' · ' + DAERAH.map(d => { const l = list.filter(x => daerah(x.s) === d); return l.length ? `${d}: ${l.length} (hutang ${rupiah(jml(l, 'hutang'))})` : '' }).filter(Boolean).join(' · ') : '');
+  if (!list.length) { tbody.innerHTML = `<tr><td colspan="10" class="empty-note">Tidak ada supplier untuk filter ini</td></tr>`; return; }
+  let dSebelum = null;
+  list.forEach(({ s, st }) => {
+    if (grup && daerah(s) !== dSebelum) {
+      dSebelum = daerah(s);
+      const l = list.filter(x => daerah(x.s) === dSebelum);
+      const h = document.createElement('tr');
+      h.innerHTML = `<td colspan="10" style="background:#f1f5f9;font-weight:800;color:#0f172a">${dSebelum === 'Jawa' ? '🚚' : dSebelum === 'Lokal' ? '🏪' : '📦'} ${esc(dSebelum)} — ${l.length} supplier · pembelian ${rupiah(jml(l, 'totalBeli'))} · sisa hutang <span class="text-red">${rupiah(jml(l, 'hutang'))}</span></td>`;
+      tbody.appendChild(h);
+    }
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${esc(s.nama)}</strong></td>

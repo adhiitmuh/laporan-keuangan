@@ -642,6 +642,14 @@
         </div>
 
         <h3 class="section-title">Daftar Supplier &amp; Posisi Hutang</h3>
+        <div class="filter-bar" id="sup-filter">
+          <input type="search" id="sup-f-cari" placeholder="🔍 Cari nama / jenis barang" />
+          <select id="sup-f-asal"><option value="">Semua daerah</option><option value="Jawa">Jawa</option><option value="Lokal">Lokal</option><option value="Lainnya">Lainnya</option></select>
+          <select id="sup-f-status"><option value="">Semua status</option><option value="hutang">Ada hutang</option><option value="lunas">Lunas</option></select>
+          <select id="sup-f-urut"><option value="nama">Urut: Nama A–Z</option><option value="hutang">Urut: Hutang terbesar</option><option value="beli">Urut: Pembelian terbesar</option></select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="sup-f-grup" checked /> Pisah per daerah</label>
+        </div>
+        <div id="sup-ringkas" style="font-size:13px;margin:4px 0 8px;color:#475569"></div>
         <div class="table-wrap">
           <table id="tbl-supplier">
             <thead>
@@ -1346,6 +1354,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261108b"></script>
+  <script type="module" src="app.js?v=20261109a"></script>
 </body>
 </html>
