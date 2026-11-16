@@ -4984,6 +4984,13 @@ document.getElementById('btn-simpan-tk').addEventListener('click', async () => {
     }
     entriKasTutup(d, d.tgl).forEach(e => batch.set(doc(collection(db, 'lk_kasir')), e));
     await batch.commit();
+    // Koreksi Owner pada tutup kasir yang sudah diterima → riwayat privat Owner
+    if (lama && lama.status === 'diterima' && currentRole === 'developer' && (Number(lama.setoran || 0) !== d.setoran || Number(lama.uangFisik || 0) !== d.uangFisik)) {
+      addDoc(collection(db, 'lk_log_privat'), { jenis: 'koreksi-setoran-kasir', rekeningId: 'laci', rekeningNama: `Tutup kasir ${d.tgl}`,
+        saldoLama: Number(lama.setoran || 0), saldoBaru: d.setoran, selisih: d.setoran - Number(lama.setoran || 0),
+        catatan: `setoran ${rupiah(Number(lama.setoran || 0))} → ${rupiah(d.setoran)}; selisih laci ${rpTanda(Number(lama.selisih || 0))} → ${d.selisih ? rpTanda(d.selisih) : 'pas'}`,
+        oleh: currentUserData?.nama || 'Owner', at: serverTimestamp() }).catch(() => {});
+    }
     toast(lama ? 'Tutup kasir diperbarui' : 'Tutup kasir tersimpan — menunggu setoran diterima pengurus');
     resetTkForm();
   } catch (e) {
@@ -4996,7 +5003,22 @@ document.getElementById('btn-simpan-tk').addEventListener('click', async () => {
 
 // ── Terima / kembalikan / hapus ──
 function tkTerima(t) {
-  confirmDelete(`Terima setoran tunai <b>${rupiah(tkSetoranBersih(t))}</b> dari kasir (${esc(labelTglTk(t.tgl))})?<br><small style="color:var(--text-muted)">Pastikan uangnya sudah dihitung. Setelah diterima, uang masuk ke saldo Tunai dan tutup kasir hari ini terkunci.</small>`, async () => {
+  const catat = tkSetoranBersih(t);
+  confirmDelete(`Terima setoran tunai dari kasir (${esc(labelTglTk(t.tgl))})<br>Catatan kasir: <b>${rupiah(catat)}</b>
+    <div style="margin-top:10px"><label style="font-size:13px;font-weight:600">Uang yang Anda hitung (Rp)</label>
+    <input type="text" inputmode="numeric" id="tk-terima-jml" value="${formatRibuan(catat)}" oninput="this.value=this.value.replace(/[^0-9]/g,'')?Number(this.value.replace(/[^0-9]/g,'')).toLocaleString('id-ID'):''" style="width:100%;font-size:16px;font-weight:700;margin-top:4px"></div>
+    <small style="color:var(--text-muted)">Hitung uangnya dulu. Kalau beda dengan catatan kasir, setoran otomatis dikembalikan ke kasir untuk diperbaiki (angka setoran & hitung laci). Setelah diterima, uang masuk ke saldo Tunai dan tutup kasir hari ini terkunci.</small>`, async () => {
+    const hitung = parseRibuan(document.getElementById('tk-terima-jml')?.value || '');
+    if (hitung !== catat) {
+      const beda = hitung - catat;
+      const catatan = `Uang setoran yang dihitung pengurus ${rupiah(hitung)}, di catatan ${rupiah(catat)} (${beda > 0 ? 'lebih' : 'kurang'} ${rupiah(Math.abs(beda))}). Perbaiki angka setoran sesuai uang yang diserahkan, lalu hitung ulang laci.`;
+      try {
+        await updateDoc(doc(db, 'lk_tutup_kasir', t.tgl), { status: 'dikembalikan', catatanKembali: catatan, dikembalikanId: currentUser.uid,
+          dikembalikanNama: currentUserData?.nama || currentUser?.email || '', dikembalikanAt: serverTimestamp() });
+        toast(`Setoran ${beda > 0 ? 'lebih' : 'kurang'} ${rupiah(Math.abs(beda))} — dikembalikan ke kasir untuk diperbaiki`);
+      } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+      return;
+    }
     try {
       await updateDoc(doc(db, 'lk_tutup_kasir', t.tgl), {
         status: 'diterima', diterimaId: currentUser.uid,
