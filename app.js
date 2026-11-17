@@ -5388,7 +5388,7 @@ function isiPilihanRekeningMutasi() {
   sel.innerHTML = rekening.map(r => `<option value="${esc(r.id)}">${esc(r.nama)} (${esc(r.bank)})${r.noRek ? ' · ' + esc(r.noRek) : ''}</option>`).join('');
   if (cur) sel.value = cur;
 }
-document.getElementById('cm-rek')?.addEventListener('change', () => { if (!cmBank) return; if (currentRole === 'developer' || cmDocId) cocokkanMutasi(); else tampilkanSiapKirim(); });
+document.getElementById('cm-rek')?.addEventListener('change', () => { if (!cmBank) return; if (currentRole === 'developer' || cmDocId) cocokkanMutasi(); else { tampilkanSiapKirim(); cocokkanMutasi(); } });
 
 // Pengurus: hasil belum diolah — hanya ringkasan file, lalu kirim ke Adi untuk disetujui
 function ringkasBank(rows) {
@@ -5496,7 +5496,7 @@ document.getElementById('cm-file')?.addEventListener('change', async e => {
     if (no) document.getElementById('cm-rek').value = no.id;
     cmFile = f; cmDocId = null;
     if (currentRole === 'developer') { cocokkanMutasi(); tombolAksiCm(); }
-    else tampilkanSiapKirim();
+    else { tampilkanSiapKirim(); cocokkanMutasi(); }   // pengurus langsung lihat daftar selisih (tanpa saldo), lalu kirim ke Adi
   } catch (err) { info.textContent = '⚠ Gagal membaca file: ' + err.message; }
 });
 
@@ -5560,6 +5560,12 @@ function cocokkanMutasi() {
   });
   const saldoBank = [...bank].reverse().find(b => b.saldo != null)?.saldo ?? null;
   const kasir = cocokPerLaporanKasir(rekId, bank, cocok, dari, sampai);
+  // Hari kasir yang cocok → transaksi bank & catatan Tutup Kasir hari itu dianggap cocok (tidak muncul lagi di daftar selisih)
+  (kasir?.hari || []).filter(x => x.ada && Math.abs(x.selisih) < 1 && x.isi.length).forEach(x => {
+    const ls = lk.filter(g => !pakaiL.has(g.i) && g.tgl === x.tgl && g.masuk > 0 && g.asal === 'Tutup Kasir');
+    x.isi.forEach(b => pakaiB.add(b.i)); ls.forEach(g => pakaiL.add(g.i));
+    cocokHari.push({ t: x.tgl, arah: 'masuk (laporan kasir)', n: x.isi.length, m: ls.length, jumlah: x.bank });
+  });
   cmHasil = { rekId, nama: a?.nama || rekeningName(rekId), dari, sampai, bank, lk, cocok, cocokHari, kasir,
     bankSaja: bank.filter(b => !pakaiB.has(b.i)), lkSaja: lk.filter(g => !pakaiL.has(g.i)), saldoBank, saldoLk };
   renderCocokMutasi();
@@ -5598,6 +5604,7 @@ function renderCocokMutasi() {
   const h = cmHasil; if (!h) return;
   const jm = (l, k) => l.reduce((s, x) => s + (x[k] || 0), 0);
   const tb = (rows, kol) => `<div class="table-wrap"><table><thead><tr>${kol.map(k => `<th>${k}</th>`).join('')}</tr></thead><tbody>${rows || '<tr><td colspan="9" style="color:#94a3b8">—</td></tr>'}</tbody></table></div>`;
+  const owner = currentRole === 'developer';
   document.getElementById('cm-info').innerHTML = `✓ ${h.bank.length} transaksi bank terbaca (${h.dari} s.d. ${h.sampai}) · masuk ${rupiah(jm(h.bank, 'kredit'))} · keluar ${rupiah(jm(h.bank, 'debit'))}`;
   const selisih = h.saldoBank == null ? null : h.saldoLk - h.saldoBank;
   const tabel = {
@@ -5615,10 +5622,11 @@ function renderCocokMutasi() {
   };
   const ket = { kasir: !h.kasir ? '' : (h.kasir.pakaiJam ? `Per hari kasir: uang masuk bank dari jam tutup kasir hari sebelumnya s.d. jam tutup hari itu${h.kasir.adaJam ? '' : ' (jam tutup belum diisi di Tutup Kasir → dianggap 23:59)'}.` : 'Mutasi bank ini tidak punya jam transaksi → dibandingkan per tanggal kalender (QRIS setelah tutup kasir bisa terlihat selisih).') + ' QRIS bisa masuk H+1 & dipotong MDR.', bank: 'Ada di bank tapi tidak ada di catatan Laporan Keuangan — kemungkinan lupa dicatat, salah pilih rekening, atau biaya admin/bunga.', lk: 'Ada di catatan tapi tidak ada di mutasi bank — cek: salah pilih rekening (mis. BNI dicatat BRI), salah nominal, atau dobel input.', cocok: 'Catatan yang cocok dengan mutasi bank.' };
   document.getElementById('cm-hasil').innerHTML = `
+    ${owner ? '' : `<div style="font-size:12px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:10px;padding:8px 12px;margin-top:12px">🔎 Daftar di bawah langsung bisa dipakai: input yang belum tercatat / perbaiki yang salah rekening, lalu upload ulang untuk cek lagi. Jangan lupa <b>Kirim ke Adi</b>. Saldo rekening hanya terlihat oleh Adi.</div>`}
     <div class="card-grid" style="margin:14px 0">
-      <div class="card"><div class="card-label">Saldo akhir bank (${esc(h.sampai)})</div><div class="card-value">${h.saldoBank == null ? '—' : rupiah(h.saldoBank)}</div></div>
+      ${owner ? `<div class="card"><div class="card-label">Saldo akhir bank (${esc(h.sampai)})</div><div class="card-value">${h.saldoBank == null ? '—' : rupiah(h.saldoBank)}</div></div>
       <div class="card"><div class="card-label">Saldo di Laporan Keuangan</div><div class="card-value">${rupiah(h.saldoLk)}</div></div>
-      <div class="card"><div class="card-label">Selisih (catatan − bank)</div><div class="card-value ${selisih ? 'text-red' : 'text-green'}">${selisih == null ? '—' : (selisih ? rupiah(selisih) : '✓ sama')}</div></div>
+      <div class="card"><div class="card-label">Selisih (catatan − bank)</div><div class="card-value ${selisih ? 'text-red' : 'text-green'}">${selisih == null ? '—' : (selisih ? rupiah(selisih) : '✓ sama')}</div></div>` : ''}
       <div class="card"><div class="card-label">✅ Cocok</div><div class="card-value text-green">${h.cocok.length + h.cocokHari.length}</div></div>
       <div class="card"><div class="card-label">❓ Di bank, tidak dicatat</div><div class="card-value text-red">${h.bankSaja.length} · ${rupiah(jm(h.bankSaja, 'kredit') - jm(h.bankSaja, 'debit'))}</div></div>
       <div class="card"><div class="card-label">⚠ Dicatat, tidak di bank</div><div class="card-value text-red">${h.lkSaja.length} · ${rupiah(jm(h.lkSaja, 'masuk') - jm(h.lkSaja, 'keluar'))}</div></div>
@@ -5635,10 +5643,10 @@ function renderCocokMutasi() {
 window.cmUnduh = () => {
   const h = cmHasil; if (!h) return;
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ Rekening: h.nama, Periode: `${h.dari} s.d. ${h.sampai}`, 'Saldo akhir bank': h.saldoBank, 'Saldo Laporan Keuangan': h.saldoLk, Selisih: h.saldoBank == null ? '' : h.saldoLk - h.saldoBank }]), 'Ringkasan');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([currentRole === 'developer' ? { Rekening: h.nama, Periode: `${h.dari} s.d. ${h.sampai}`, 'Saldo akhir bank': h.saldoBank, 'Saldo Laporan Keuangan': h.saldoLk, Selisih: h.saldoBank == null ? '' : h.saldoLk - h.saldoBank } : { Rekening: h.nama, Periode: `${h.dari} s.d. ${h.sampai}` }]), 'Ringkasan');
   if (h.kasir) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(h.kasir.hari.map(x => ({ 'Hari kasir': x.tgl, 'Jam tutup': x.jamTutup, 'Laporan kasir QRIS/TF': x.ada ? x.laporan : 'belum ada', 'Masuk bank': x.bank, Selisih: x.selisih, 'Transaksi bank': x.isi.map(b => `${b.jam || ''} ${b.kredit} ${String(b.ket || '').slice(0, 40)}`.trim()).join(' | ') }))), 'Per laporan kasir');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(h.bankSaja.map(b => ({ Tanggal: b.tgl, Jam: b.jam || '', Keterangan: b.ket, Masuk: b.kredit || 0, Keluar: b.debit || 0 }))), 'Di bank tdk dicatat');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(h.lkSaja.map(g => ({ Tanggal: g.tgl, Keterangan: g.ket, Kategori: g.kategori, Masuk: g.masuk || 0, Keluar: g.keluar || 0, Diinput: g.oleh }))), 'Dicatat tdk di bank');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(h.bank.map(b => ({ Tanggal: b.tgl, Keterangan: b.ket, Masuk: b.kredit || 0, Keluar: b.debit || 0, Saldo: b.saldo ?? '' }))), 'Mutasi bank');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(h.bank.map(b => ({ Tanggal: b.tgl, Jam: b.jam || '', Keterangan: b.ket, Masuk: b.kredit || 0, Keluar: b.debit || 0, ...(currentRole === 'developer' ? { Saldo: b.saldo ?? '' } : {}) }))), 'Mutasi bank');
   XLSX.writeFile(wb, `Cocok_Mutasi_${h.nama.replace(/[^\w]+/g, '_')}_${h.dari}_${h.sampai}.xlsx`);
 };
