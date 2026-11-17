@@ -293,7 +293,7 @@ function pesanPengajuan(p, judul, tambahan = []) {
 
 function tawarkanWA(teksModal, pesan) {
   confirmDelete(teksModal, () => {
-    window.open('https://wa.me/?text=' + encodeURIComponent(pesan), '_blank');
+    window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(pesan), '_blank');
   }, '📲 Kirim WA');
 }
 
@@ -1253,8 +1253,13 @@ function renderPengajuanTransfer() {
       ? '<span class="badge badge-po-pending">Menunggu Adi</span>'
       : t.status === 'disetujui'
         ? `<span class="badge badge-lunas">✓ Disetujui</span>${t.approvalNama ? `<br><small style="color:#9ca3af">${esc(nm(t.approvalNama))}</small>` : ''}`
-        : `<span class="badge badge-hutang">Ditolak</span>${t.rejectReason ? `<br><small style="color:#9ca3af">${esc(t.rejectReason)}</small>` : ''}`;
-    const tombol = t.status !== 'menunggu' ? '' : [
+        : t.status === 'dibatalkan'
+          ? `<span class="badge badge-hutang">↩ Dibatalkan</span><br><small style="color:#9ca3af">${esc(nm(t.dibatalkanNama || ''))}${t.alasanBatal ? ' · ' + esc(t.alasanBatal) : ''}</small>`
+          : `<span class="badge badge-hutang">Ditolak</span>${t.rejectReason ? `<br><small style="color:#9ca3af">${esc(t.rejectReason)}</small>` : ''}`;
+    const tombol = t.status === 'disetujui' ? [
+      currentRole === 'developer' ? `<button class="btn-sm btn-sm-red" data-batal-setuju-tf="${esc(t.id)}" title="Batalkan transfer yang sudah disetujui — saldo kedua akun kembali">↩ Batalkan</button>` : '',
+      currentRole !== 'developer' && milikSaya ? `<button class="btn-sm btn-sm-gray" data-minta-batal-tf="${esc(t.id)}" title="Minta Adi membatalkan lewat WhatsApp">📲 Minta batal</button>` : '',
+    ].join(' ') : t.status !== 'menunggu' ? '' : [
       currentRole === 'developer' ? `<button class="btn-sm btn-sm-green" data-setujui-tf="${esc(t.id)}">✓ Setujui</button>` : '',
       currentRole === 'developer' ? `<button class="btn-sm btn-sm-red" data-tolak-tf="${esc(t.id)}">Tolak</button>` : '',
       milikSaya ? `<button class="btn-sm btn-sm-green" data-ingatkan-tf="${esc(t.id)}">📲 Ingatkan</button>` : '',
@@ -1273,6 +1278,35 @@ function renderPengajuanTransfer() {
   }).join('');
 }
 
+// Batalkan transfer yang sudah disetujui (Owner): hapus catatan transfer (lk_mutasi) → saldo kedua akun kembali,
+// pengajuan tetap tersimpan dengan status 'dibatalkan' + alasan. Pengurus hanya bisa minta batal lewat WhatsApp.
+function batalkanTransferDisetujui(t, minta) {
+  const ringkas = `${t.dariLabel || t.dari} → ${t.keLabel || t.ke} ${rupiah(t.jumlah)} (${t.tgl})`;
+  if (minta) {
+    const alasan = prompt(`Minta Adi membatalkan transfer ${ringkas}.\nAlasannya:`, '');
+    if (alasan === null) return;
+    window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(pesanTransfer(t, '↩ Mohon dibatalkan: transfer yang sudah disetujui', [alasan.trim() ? `Alasan: ${alasan.trim()}` : null].filter(Boolean))), '_blank');
+    return;
+  }
+  if (currentRole !== 'developer') return;
+  const alasan = prompt(`Batalkan transfer ${ringkas}?\nSaldo ${t.dariLabel || t.dari} & ${t.keLabel || t.ke} kembali seperti sebelum transfer.\n\nAlasan pembatalan (wajib):`, '');
+  if (alasan === null) return;
+  if (!alasan.trim()) { toast('Isi alasan pembatalan', 'error'); return; }
+  (async () => {
+    try {
+      const batch = writeBatch(db);
+      const terkait = mutasiData.filter(m => m.id === t.mutasiDocId || m.sumberPengajuanTransferId === t.id);
+      terkait.forEach(m => batch.delete(doc(db, 'lk_mutasi', m.id)));
+      batch.update(doc(db, 'lk_pengajuan_transfer', t.id), { status: 'dibatalkan', alasanBatal: alasan.trim(),
+        dibatalkanId: currentUser.uid, dibatalkanNama: currentUserData?.nama || '', dibatalkanAt: serverTimestamp() });
+      await batch.commit();
+      toast(terkait.length ? 'Transfer dibatalkan — saldo kembali' : 'Pengajuan dibatalkan (catatan transfer sudah tidak ada)');
+      tawarkanWA(`Transfer dibatalkan. Kabari ${esc(nm(t.pengajuNama) || 'pengaju')} lewat WhatsApp?`,
+        pesanTransfer(t, '↩ Transfer DIBATALKAN', [`Dibatalkan: ${currentUserData?.nama || 'Adi'}`, `Alasan: ${alasan.trim()}`]));
+    } catch (err) { toast('Gagal: ' + err.message, 'error'); }
+  })();
+}
+
 function updateTransferBadge() {
   const nav = document.querySelector('.nav-btn[data-page="transfer"]');
   if (!nav) return;
@@ -1285,9 +1319,10 @@ function updateTransferBadge() {
 document.getElementById('tbody-pengajuan-transfer')?.addEventListener('click', async e => {
   const btn = e.target.closest('button');
   if (!btn) return;
-  const { setujuiTf, tolakTf, ingatkanTf, batalTf } = btn.dataset;
-  const id = setujuiTf || tolakTf || ingatkanTf || batalTf;
+  const { setujuiTf, tolakTf, ingatkanTf, batalTf, batalSetujuTf, mintaBatalTf } = btn.dataset;
+  const id = setujuiTf || tolakTf || ingatkanTf || batalTf || batalSetujuTf || mintaBatalTf;
   const t = pengajuanTransfer.find(x => x.id === id);
+  if (t && t.status === 'disetujui' && (batalSetujuTf || mintaBatalTf)) return batalkanTransferDisetujui(t, !!mintaBatalTf);
   if (!t || t.status !== 'menunggu') return;
   const saya = { id: currentUser.uid, nama: currentUserData?.nama || '' };
   const ringkas = `<strong>${esc(t.dariLabel)} → ${esc(t.keLabel)}</strong> sebesar <strong>${rupiah(t.jumlah)}</strong> dari ${esc(nm(t.pengajuNama) || '-')}`;
@@ -1331,7 +1366,7 @@ document.getElementById('tbody-pengajuan-transfer')?.addEventListener('click', a
         pesanTransfer(t, '❌ Pengajuan transfer DITOLAK', [`Ditolak: ${saya.nama}`, reason.trim() ? `Alasan: ${reason.trim()}` : null].filter(Boolean)));
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
   } else if (ingatkanTf && t.pengajuId === saya.id) {
-    window.open('https://wa.me/?text=' + encodeURIComponent(pesanTransfer(t, '⏰ Pengingat: pengajuan transfer menunggu persetujuan')), '_blank');
+    window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(pesanTransfer(t, '⏰ Pengingat: pengajuan transfer menunggu persetujuan')), '_blank');
   } else if (batalTf && t.pengajuId === saya.id) {
     confirmDelete(`Batalkan pengajuan transfer ${ringkas}?`, async () => {
       try {
@@ -1742,7 +1777,14 @@ document.getElementById('tbody-mutasi').addEventListener('click', e => {
   const m = mutasiData.find(x => x.id === id);
   confirmDelete(`Hapus transfer <strong>${esc(m?.dariLabel || '')} → ${esc(m?.keLabel || '')}</strong> sebesar <strong>${rupiah(m?.jumlah)}</strong>?<br><small style="color:var(--text-muted)">Saldo kedua akun kembali seperti sebelum transfer.</small>`, async () => {
     try {
-      await deleteDoc(doc(db, 'lk_mutasi', id));
+      const tf = m?.sumberPengajuanTransferId && pengajuanTransfer.find(x => x.id === m.sumberPengajuanTransferId);
+      if (tf && tf.status === 'disetujui') {
+        const batch = writeBatch(db);
+        batch.delete(doc(db, 'lk_mutasi', id));
+        batch.update(doc(db, 'lk_pengajuan_transfer', tf.id), { status: 'dibatalkan', alasanBatal: 'Dihapus dari riwayat transfer',
+          dibatalkanId: currentUser.uid, dibatalkanNama: currentUserData?.nama || '', dibatalkanAt: serverTimestamp() });
+        await batch.commit();
+      } else await deleteDoc(doc(db, 'lk_mutasi', id));
       toast('Transfer dihapus');
     } catch (err) {
       toast('Gagal menghapus: ' + err.message, 'error');
@@ -3381,7 +3423,7 @@ document.getElementById('tbody-pengajuan-pending')?.addEventListener('click', as
     } catch (err) { toast('Gagal: ' + err.message, 'error'); }
   } else if (ingatkanPgj && a.ingatkan) {
     const tahap = p.status === 'cek' ? 'Checker' : 'Approval';
-    window.open('https://wa.me/?text=' + encodeURIComponent(
+    window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(
       pesanPengajuan(p, `⏰ Pengingat: pengajuan pengeluaran menunggu ${tahap}`,
         p.cekNama ? [`Sudah dicek: ${nm(p.cekNama)}`] : [])), '_blank');
   } else if (batalPgj && a.batal) {
@@ -5369,7 +5411,7 @@ async function kirimCekMutasi() {
       rows: cmBank.map(m => ({ tgl: m.tgl, ket: String(m.ket || '').slice(0, 160), kredit: m.kredit || 0, debit: m.debit || 0, saldo: m.saldo ?? null })),
       fileNama: cmFile?.name || '', fileUrl, status: 'menunggu', createdAt: serverTimestamp(), ...inputByFields() });
     document.getElementById('cm-aksi').innerHTML = `<div style="color:#15803d;font-weight:700">✓ Terkirim — menunggu persetujuan Adi.</div><button class="btn-outline" id="btn-cm-wa" style="margin-top:6px">📲 Kabari Adi lewat WA</button>`;
-    document.getElementById('btn-cm-wa').onclick = () => window.open('https://wa.me/?text=' + encodeURIComponent(`Assalamualaikum Pak Adi, mutasi rekening *${rekeningName(rekId)}* periode ${r.dari} s.d. ${r.sampai} (${r.n} transaksi) sudah saya unggah di Laporan Keuangan → 🔎 Cocokkan Mutasi. Mohon diperiksa & disetujui. 🙏`), '_blank');
+    document.getElementById('btn-cm-wa').onclick = () => window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(`Assalamualaikum Pak Adi, mutasi rekening *${rekeningName(rekId)}* periode ${r.dari} s.d. ${r.sampai} (${r.n} transaksi) sudah saya unggah di Laporan Keuangan → 🔎 Cocokkan Mutasi. Mohon diperiksa & disetujui. 🙏`), '_blank');
     cmBank = null; document.getElementById('cm-file').value = '';
   } catch (err) { toast('Gagal mengirim: ' + err.message, 'error'); btn.disabled = false; btn.textContent = '📤 Kirim ke Adi untuk disetujui'; }
 }
