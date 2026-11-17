@@ -43,7 +43,8 @@ export function barisDariTeks(lines, tahun) {
     if (!line.trim()) continue
     const t = tanggalAwal(line, tahun)
     if (t) {
-      const sisa = t.sisa.replace(/^\s*\d{2}:\d{2}(:\d{2})?/, '') // jam (BRI)
+      const mj = t.sisa.match(/^\s*(\d{2}):(\d{2})(?::\d{2})?/)            // jam (BRI, dll.)
+      const sisa = mj ? t.sisa.slice(mj[0].length) : t.sisa
       if (/SALDO\s+AWAL|SALDO\s+AKHIR|OPENING\s+BALANCE|CLOSING\s+BALANCE|BEGINNING\s+BALANCE/i.test(sisa)) { cur = null; continue }
       const nom = [...sisa.matchAll(RE_NOMINAL)].map(m => ({ v: angkaNominal(m[1]), tanda: (m[2] || '').trim().toUpperCase(), idx: m.index }))
       if (!nom.length) { cur = null; continue }
@@ -56,7 +57,7 @@ export function barisDariTeks(lines, tahun) {
       // Saldo: nominal terakhir tanpa tanda, bila ada ≥2 nominal (BRI tiap baris, BCA akhir hari)
       const akhir = nom[nom.length - 1]
       const saldo = nom.length >= 2 && !akhir.tanda ? akhir.v : null
-      cur = { tgl: t.tgl, ket, kredit, debit, saldo }
+      cur = { tgl: t.tgl, ket, kredit, debit, saldo, ...(mj ? { jam: `${mj[1]}:${mj[2]}` } : {}) }
       hasil.push(cur)
     } else if (cur && line.trim().length < 80 && !/halaman|page \d|^\s*(tanggal|transaction|keterangan|uraian|saldo|total)/i.test(line)) {
       cur.ket = (cur.ket + ' ' + line.replace(/\s{2,}/g, ' ').trim()).trim()
