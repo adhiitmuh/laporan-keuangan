@@ -4803,7 +4803,7 @@ function bacaFormTk() {
   const rincian = bacaRincian();
   const d = {
     tgl: tkVal('tk-tgl'),
-    jamTutup: tkVal('tk-jam'),
+    jamTutup: document.getElementById('tk-jam').dataset.otomatis === '1' ? (() => { const n = new Date(); return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; })() : tkVal('tk-jam'),
     modalAwal: tkNum('tk-modal'),
     resi: Number(tkVal('tk-resi') || 0),
     totalPenjualan: tkNum('tk-total'),
@@ -4896,7 +4896,7 @@ function resetTkForm() {
   tkNtDisentuh = false;
   const tglEl = document.getElementById('tk-tgl');
   tglEl.value = tglLokal(); tglEl.disabled = false;
-  document.getElementById('tk-jam').value = '';
+  { const n = new Date(), el = document.getElementById('tk-jam'); el.value = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; el.dataset.otomatis = '1'; }   // otomatis; dipakai jam saat Simpan kecuali diubah kasir
   isiPilihanAlasan();
   ['tk-modal', 'tk-resi', 'tk-total', 'tk-diskon', 'tk-tunai', 'tk-retur', 'tk-kmk', 'tk-alasan-kmk', 'tk-setoran', 'tk-fisik', 'tk-alasan-selisih', 'tk-foto', 'tk-alasan-kmk-pil', 'tk-alasan-selisih-pil']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -4919,7 +4919,7 @@ function isiFormTk(t) {
   tkEditTgl = t.tgl;
   const tglEl = document.getElementById('tk-tgl');
   tglEl.value = t.tgl; tglEl.disabled = true;
-  document.getElementById('tk-jam').value = t.jamTutup || '';
+  document.getElementById('tk-jam').value = t.jamTutup || ''; document.getElementById('tk-jam').dataset.otomatis = '';
   const set = (id, v) => { document.getElementById(id).value = v ? formatRibuan(v) : ''; };
   set('tk-modal', t.modalAwal); set('tk-total', t.totalPenjualan); set('tk-diskon', t.diskon);
   set('tk-tunai', t.penjualanTunai); set('tk-retur', t.returTunai); set('tk-setoran', t.setoran);
@@ -4961,6 +4961,7 @@ document.getElementById('tk-tgl').addEventListener('change', () => {
 document.getElementById('btn-tk-tambah-nontunai').onclick = () => tambahBarisNonTunai();
 document.getElementById('btn-tk-tambah-rincian').onclick = () => { tambahBarisRincian(); document.querySelector('#tk-rincian .tk-baris:last-child .tk-rc-ket')?.focus(); };
 document.getElementById('btn-batal-tk').onclick = () => resetTkForm();
+document.getElementById('tk-jam')?.addEventListener('input', e => { e.target.dataset.otomatis = ''; });
 
 // ── Simpan ──
 function entriKasTutup(d, tgl) {
@@ -5581,6 +5582,9 @@ function cocokPerLaporanKasir(rekId, bank, cocok, dari, sampai) {
   const pakaiJam = bank.some(b => b.jam);
   const masuk = bank.filter(b => b.kredit > 0 && !lain.has(b.i));
   const waktu = (tgl, jam) => `${tgl} ${jam || '23:59'}`;
+  // Jam tutup: isian kasir; kalau kosong pakai jam tutup kasir disimpan (bila disimpan di hari yang sama)
+  const jamDari = t => { if (!t) return ''; if (t.jamTutup) return t.jamTutup; const c = t.createdAt?.toDate ? t.createdAt.toDate() : null;
+    return c && tglLokal(c) === t.tgl ? `${String(c.getHours()).padStart(2, '0')}:${String(c.getMinutes()).padStart(2, '0')}` : ''; };
   const hariSebelum = t => { const d = new Date(t + 'T00:00:00'); d.setDate(d.getDate() - 1); return tglLokal(d); };
   const tkMap = Object.fromEntries(tkData.map(t => [t.tgl, t]));
   const hari = [], dipakai = new Set();
@@ -5589,14 +5593,14 @@ function cocokPerLaporanKasir(rekId, bank, cocok, dari, sampai) {
     const tgl = tglLokal(d), t = tkMap[tgl];
     const lap = t ? (t.nonTunai || []).filter(m => m.rekeningId === rekId).reduce((s, m) => s + (Number(m.jumlah) || 0), 0) : null;
     let awal, akhir;
-    if (pakaiJam) { const prev = tkMap[hariSebelum(tgl)]; awal = waktu(hariSebelum(tgl), prev?.jamTutup); akhir = waktu(tgl, t?.jamTutup); }
+    if (pakaiJam) { const prev = tkMap[hariSebelum(tgl)]; awal = waktu(hariSebelum(tgl), jamDari(prev)); akhir = waktu(tgl, jamDari(t)); }
     const isi = masuk.filter(b => !dipakai.has(b.i) && (pakaiJam ? (waktu(b.tgl, b.jam) > awal && waktu(b.tgl, b.jam) <= akhir) : b.tgl === tgl));
     isi.forEach(b => dipakai.add(b.i));
     const bankJml = isi.reduce((s, b) => s + b.kredit, 0);
     if (!t && !isi.length) continue;
-    hari.push({ tgl, jamTutup: t?.jamTutup || '', ada: !!t, laporan: lap || 0, bank: bankJml, selisih: bankJml - (lap || 0), isi, awal, akhir });
+    hari.push({ tgl, jamTutup: jamDari(t), ada: !!t, laporan: lap || 0, bank: bankJml, selisih: bankJml - (lap || 0), isi, awal, akhir });
   }
-  return { pakaiJam, hari, adaJam: tk.some(t => t.jamTutup) };
+  return { pakaiJam, hari, adaJam: tk.some(t => t.jamTutup || t.createdAt) };
 }
 
 window.cmPilihTab = t => { cmTab = t; renderCocokMutasi(); };
