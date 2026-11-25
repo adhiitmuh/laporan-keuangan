@@ -206,6 +206,11 @@
                 <option value="transfer">Transfer</option>
               </select>
             </div>
+            <div class="form-group" id="beli-sumber-wrap" style="display:none">
+              <label>Dibayar dari</label>
+              <select id="beli-sumber"><option value="">-- Pilih sumber dana --</option></select>
+              <small style="color:#6b7280">Langsung tercatat lunas: kas/rekening berkurang otomatis (Kasir → Bayar Supplier)</small>
+            </div>
             <div class="form-group">
               <label>Keterangan</label>
               <input type="text" id="beli-ket" placeholder="Opsional" />
@@ -1359,6 +1364,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261109c"></script>
+  <script type="module" src="app.js?v=20261125a"></script>
 </body>
 </html>

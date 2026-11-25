@@ -628,6 +628,7 @@ function startListeners() {
     kasirData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     isiFilterKasLain();
     renderKasir();
+    renderPembelian(); // status Lunas/Hutang di tabel pembelian ikut kas
     renderSupplier();
     renderDashboard();
   }, 'kasir'));
@@ -831,6 +832,14 @@ function populateRekeningSelects() {
   });
 
   // Dropdown modal bayar supplier (Tunai + semua rekening)
+  // Sumber dana di form Pembelian (Tunai/Transfer = langsung lunas)
+  const beliSumSel = document.getElementById('beli-sumber');
+  if (beliSumSel) {
+    const prev = beliSumSel.value;
+    beliSumSel.innerHTML = '<option value="">-- Pilih sumber dana --</option><option value="tunai">💵 Tunai (laci/kas)</option>'
+      + rekening.map(r => `<option value="${esc(r.id)}">🏦 ${esc(r.nama)} (${esc(r.bank)})</option>`).join('');
+    beliSumSel.value = prev;
+  }
   const bayarRekSel = document.getElementById('bayar-rekening');
   if (bayarRekSel) {
     const prevBayar = bayarRekSel.value;
@@ -1418,7 +1427,10 @@ function renderPembelian(filter = pembelianFilter) {
     totalSum += Number(p.total || 0);
 
     // Badge cara bayar
-    const bayarBadge = p.caraBayar === 'hutang'
+    const lunasKas = kasirData.some(k => k.autoFromBeli === p.id);
+    const bayarBadge = lunasKas
+      ? `<span class="badge badge-lunas">✓ Lunas</span><br><small style="color:#9ca3af">${p.caraBayar === 'transfer' ? 'Transfer' : p.caraBayar === 'tunai' ? 'Tunai' : 'Dibayar'}</small>`
+      : p.caraBayar === 'hutang' || !p.caraBayar
       ? '<span class="badge badge-hutang">Hutang</span>'
       : p.caraBayar === 'tunai'
       ? '<span class="badge badge-tunai">Tunai</span>'
@@ -1451,7 +1463,9 @@ function renderPembelian(filter = pembelianFilter) {
           <button class="btn-sm btn-sm-green" data-approve-beli="${esc(p.id)}">✓ Setujui</button>
           <button class="btn-sm btn-sm-red"   data-reject-beli="${esc(p.id)}">✗ Tolak</button>`;
       }
-      approvalBtns += `<button class="btn-sm btn-sm-blue" data-upload-bukti="${esc(p.id)}" title="Upload bukti transfer">📎 Bukti</button>`;
+      approvalBtns += kasirData.some(k => k.autoFromBeli === p.id)
+        ? `<button class="btn-sm btn-sm-blue" data-upload-bukti="${esc(p.id)}" title="Upload bukti transfer">📎 Bukti</button>`
+        : `<button class="btn-sm btn-sm-blue" data-upload-bukti="${esc(p.id)}" title="Catat pembayaran ke supplier">💸 Bayar</button>`;
     }
 
     // Badge siapa yang input
@@ -1500,12 +1514,27 @@ function resetBeliForm() {
   document.getElementById('beli-supplier').value = '';
   document.getElementById('beli-carabayar').value = 'hutang';
   document.getElementById('beli-tgl').value      = today();
+  document.getElementById('beli-sumber').value = ''; aturSumberBeli();
   setEl('beli-form-title', 'Tambah Pembelian');
   document.getElementById('btn-simpan-beli').textContent = 'Simpan Pembelian';
   document.getElementById('btn-batal-beli')?.style.setProperty('display', 'none');
 }
 document.getElementById('btn-batal-beli')?.addEventListener('click', resetBeliForm);
 
+function aturSumberBeli() {
+  const cara = document.getElementById('beli-carabayar').value, sel = document.getElementById('beli-sumber')
+  document.getElementById('beli-sumber-wrap').style.display = cara === 'hutang' ? 'none' : ''
+  if (cara === 'tunai' && !sel.value) sel.value = 'tunai'
+  if (cara === 'transfer' && sel.value === 'tunai') sel.value = ''
+}
+document.getElementById('beli-carabayar').addEventListener('change', aturSumberBeli);
+// Data kas otomatis untuk pembelian yang langsung dibayar (sama dengan tombol Bayar)
+function kasBayarBeli(beliId, p, sumber) {
+  const via = sumber === 'tunai' ? 'tunai' : 'transfer';
+  return { tgl: p.tgl, jenis: 'pengeluaran', kategori: 'bayar-supplier', supplierId: p.supplierId || null,
+    jumlah: Number(p.total || 0), via, rekeningId: via === 'transfer' ? sumber : null,
+    ket: `Auto — bayar pembelian ${p.jenis || ''} (${p.tgl})`, autoFromBeli: beliId, ...inputByFields(), createdAt: serverTimestamp() };
+}
 document.getElementById('btn-simpan-beli').addEventListener('click', async () => {
   const tgl   = document.getElementById('beli-tgl').value;
   const supId = document.getElementById('beli-supplier').value;
@@ -1518,6 +1547,11 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
 
   if (!tgl || !supId || !jenis || !total) { toast('Tanggal, supplier, jenis, dan total wajib diisi', 'error'); return; }
   if (link && !/^https?:\/\/.+/.test(link)) { toast('Link nota harus diawali https:// atau http://', 'error'); return; }
+  const caraBayar = document.getElementById('beli-carabayar').value;
+  const sumber    = caraBayar === 'hutang' ? '' : document.getElementById('beli-sumber').value;
+  const sudahBayar = editingBeliId ? kasirData.find(k => k.autoFromBeli === editingBeliId) : null;
+  if (caraBayar !== 'hutang' && !sudahBayar && !sumber) { toast('Pilih "Dibayar dari" (tunai / rekening) — atau pilih Hutang kalau belum dibayar', 'error'); return; }
+  if (caraBayar === 'transfer' && sumber === 'tunai') { toast('Transfer harus dari rekening', 'error'); return; }
 
   const btn = document.getElementById('btn-simpan-beli');
   btn.disabled = true; btn.textContent = '⏳ Menyimpan…';
@@ -1534,7 +1568,7 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
     const data = {
       tgl, supplierId: supId, jenis, qty, harga, total,
       linkNota: link || null,
-      caraBayar: document.getElementById('beli-carabayar').value,
+      caraBayar,
       ket: document.getElementById('beli-ket').value.trim(),
     };
     if (editingBeliId) {
@@ -1542,16 +1576,25 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
       await updateDoc(doc(db, 'lk_pembelian', editingBeliId), {
         ...data, editedByNama: currentUserData?.nama || '', editedAt: serverTimestamp(),
       });
-      toast('Pembelian diperbarui ✓');
+      if (caraBayar !== 'hutang' && !sudahBayar) {
+        await addDoc(collection(db, 'lk_kasir'), kasBayarBeli(editingBeliId, data, sumber));
+        toast('Pembelian diperbarui ✓ — pembayaran tercatat, hutang lunas');
+      } else if (sudahBayar && (Number(sudahBayar.jumlah) !== Number(total) || caraBayar === 'hutang')) {
+        toast(`Pembelian diperbarui. Perhatian: pembayaran ${rupiah(sudahBayar.jumlah)} sudah tercatat di Kasir — sesuaikan/hapus di Kasir bila perlu`, 'error');
+      } else toast('Pembelian diperbarui ✓');
     } else {
-      await addDoc(collection(db, 'lk_pembelian'), {
+      const beliRef = doc(collection(db, 'lk_pembelian'));
+      const batch = writeBatch(db);
+      batch.set(beliRef, {
         ...data, fotoNota,
         statusApproval: 'menunggu',
         buktiTransfer: null,
         ...inputByFields(),
         createdAt: serverTimestamp(),
       });
-      toast('Pembelian berhasil disimpan, menunggu approval pengurus');
+      if (caraBayar !== 'hutang') batch.set(doc(collection(db, 'lk_kasir')), kasBayarBeli(beliRef.id, data, sumber));
+      await batch.commit();
+      toast(caraBayar === 'hutang' ? 'Pembelian disimpan sebagai hutang, menunggu approval pengurus' : 'Pembelian disimpan & langsung lunas (kas tercatat), menunggu approval pengurus');
     }
     resetBeliForm();
   } catch (e) {
@@ -1583,6 +1626,7 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
     document.getElementById('beli-qty').value       = p.qty ? formatRibuan(p.qty) : '';
     document.getElementById('beli-harga').value     = p.harga ? formatRibuan(p.harga) : '';
     document.getElementById('beli-carabayar').value = p.caraBayar || 'hutang';
+    { const kb = kasirData.find(k => k.autoFromBeli === editId); document.getElementById('beli-sumber').value = kb ? (kb.via === 'tunai' ? 'tunai' : (kb.rekeningId || '')) : ''; aturSumberBeli() }
     document.getElementById('beli-ket').value       = p.ket || '';
     document.getElementById('beli-link').value      = p.linkNota || '';
     document.getElementById('beli-foto').value      = '';
@@ -1596,8 +1640,10 @@ document.getElementById('tbody-pembelian').addEventListener('click', async e => 
   // Hapus
   const delId = e.target.dataset.delBeli;
   if (delId) {
-    confirmDelete('Hapus data pembelian ini?', async () => {
+    const kbDel = kasirData.filter(k => k.autoFromBeli === delId);
+    confirmDelete(kbDel.length ? `Hapus data pembelian ini?<br><small>Pembayaran otomatis ${rupiah(kbDel.reduce((t, k) => t + Number(k.jumlah || 0), 0))} di Kasir ikut dihapus.</small>` : 'Hapus data pembelian ini?', async () => {
       try {
+        if (kbDel.length) { const b = writeBatch(db); kbDel.forEach(k => b.delete(doc(db, 'lk_kasir', k.id))); b.delete(doc(db, 'lk_pembelian', delId)); await b.commit(); toast('Pembelian & pembayarannya dihapus'); return }
         await deleteDoc(doc(db, 'lk_pembelian', delId));
         toast('Data pembelian dihapus');
       } catch (err) {
