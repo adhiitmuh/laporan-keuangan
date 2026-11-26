@@ -2252,7 +2252,7 @@ document.getElementById('btn-export-kas').addEventListener('click', () => {
   const rows = data.map(k => ({ Tanggal: k.tgl, Jenis: k.jenis === 'pemasukan' ? 'Pemasukan' : 'Pengeluaran',
     Kategori: getKategoriLabel(k.kategori), Supplier: k.supplierId ? supplierName(k.supplierId) : '',
     Masuk: k.jenis === 'pemasukan' ? Number(k.jumlah || 0) : '', Keluar: k.jenis === 'pengeluaran' ? Number(k.jumlah || 0) : '',
-    Sumber: labelVia(k), Keterangan: k.ket || '', 'Diinput Oleh': namaPenginput(k), Asal: asalLabel[asalKas(k)] }));
+    Sumber: labelVia(k), Keterangan: k.ket || '', 'Diinput Oleh': namaPenginput(k), 'Waktu Input': k.createdAt?.toDate ? k.createdAt.toDate().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '', Asal: asalLabel[asalKas(k)] }));
   const masuk = data.filter(k => k.jenis === 'pemasukan').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   const keluar = data.filter(k => k.jenis === 'pengeluaran').reduce((a, k) => a + Number(k.jumlah || 0), 0);
   rows.push({}, { Tanggal: 'TOTAL', Masuk: masuk, Keluar: keluar }, { Tanggal: 'SALDO', Masuk: masuk - keluar });
@@ -4015,7 +4015,7 @@ function renderPiutang() {
       <td>${p.cicilan ? rupiah(p.cicilan) + '/bln' : '–'}</td>
       <td>${nextTgl !== '–' ? `<span style="font-weight:600">${nextTgl}</span>` : '–'}</td>
       <td>${lunas ? '<span class="badge badge-lunas">✓ Lunas</span>' : '<span class="badge badge-hutang">Aktif</span>'}</td>
-      <td>${inputByBadge(p)}</td>
+      <td>${inputByBadge(p)}${p.createdAt?.toDate ? `<br><small style="color:#9ca3af">input ${esc(p.createdAt.toDate().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }))}</small>` : ''}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn-sm btn-sm-gray" data-riwayat-piu="${esc(p.id)}">📋 Riwayat</button>
