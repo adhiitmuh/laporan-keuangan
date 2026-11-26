@@ -927,6 +927,61 @@ function populateSupplierSelects() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
+// Saldo kas Tunai aplikasi: saldo awal + kas lewat Tunai + transfer antar akun + setoran kasir yang sudah diterima
+function hitungSaldoTunai() {
+  const mMasuk  = mutasiData.filter(m => m.ke   === 'tunai').reduce((a, m) => a + Number(m.jumlah || 0), 0);
+  const mKeluar = mutasiData.filter(m => m.dari === 'tunai').reduce((a, m) => a + Number(m.jumlah || 0), 0);
+  return saldoAwalTunai
+    + kasirData.filter(k => !k.via || k.via === 'tunai').reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
+    + mMasuk - mKeluar + tkSetoranDiterima();
+}
+
+// ── Cek & Hitung Kas Tunai (Owner): bandingkan uang asli dengan aplikasi, tunjukkan kemungkinan penyebab ──
+function renderCekTunai() {
+  const wrap = document.getElementById('cek-tunai-wrap'); if (!wrap) return;
+  wrap.style.display = currentRole === 'developer' ? '' : 'none'; if (currentRole !== 'developer') return;
+  const tglIn = document.getElementById('cek-tunai-tgl'); if (!tglIn.value) tglIn.value = today();
+  const tunaiKas = kasirData.filter(k => !k.via || k.via === 'tunai');
+  const tkUrut = tkTerurut(), tkPertama = tkUrut[0]?.tgl || '', tkBelum = tkData.filter(t => t.status !== 'diterima');
+  const kasPertama = tunaiKas.map(k => k.tgl).filter(Boolean).sort()[0] || '';
+  const sebelumTk = tkPertama ? tunaiKas.filter(k => k.tgl < tkPertama) : [];
+  const jualTunaiSblm = sebelumTk.filter(k => k.jenis === 'pemasukan' && k.kategori === 'penjualan').length;
+  const ganjil = tunaiKas.filter(k => Number(k.jumlah || 0) % 1000 !== 0);
+  const sumJ = l => l.reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0);
+  const li = [];
+  li.push(`Saldo Tunai di aplikasi: <b>${rupiah(hitungSaldoTunai())}</b> = saldo awal ${rupiah(saldoAwalTunai)} + kas Tunai ${rpTanda(sumJ(tunaiKas))} + setoran kasir diterima ${rupiah(tkSetoranDiterima())} + transfer antar akun.`);
+  li.push(`Catatan Tunai paling awal: <b>${kasPertama ? esc(labelTglTk(kasPertama)) : '–'}</b>. Saldo awal Tunai tidak bertanggal — pastikan angka ${rupiah(saldoAwalTunai)} adalah uang tunai <i>sebelum</i> tanggal itu.`);
+  if (tkPertama) li.push(`Tutup Kasir pertama: <b>${esc(labelTglTk(tkPertama))}</b>. Setoran UL sebelum tanggal ini <b>tidak masuk</b> ke Tunai aplikasi${jualTunaiSblm ? '' : ' (tidak ada catatan penjualan tunai sebelum tanggal itu)'} — kalau di buku manual ada setoran sebelum tanggal ini, itulah selisihnya.`);
+  if (tkBelum.length) li.push(`<span style="color:#c2410c">${tkBelum.length} Tutup Kasir belum ditekan <b>Terima</b> (setoran ${rupiah(tkBelum.reduce((a, t) => a + tkSetoranBersih(t), 0))} belum masuk Tunai).</span>`);
+  if (ganjil.length) li.push(`${ganjil.length} catatan Tunai tidak bulat ribuan (sering tanda salah ketik/salah sumber): ` + ganjil.slice(0, 8).map(k => `${esc(k.tgl)} ${k.jenis === 'pemasukan' ? '+' : '−'}${rupiah(k.jumlah)} <span class="text-muted-sm">${esc((k.ket || getKategoriLabel(k.kategori)).slice(0, 40))}</span>`).join('; ') + (ganjil.length > 8 ? ' …' : ''));
+  document.getElementById('cek-tunai-diag').innerHTML = `<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.7">${li.map(x => `<li>${x}</li>`).join('')}</ul>`;
+  hitungCekTunai();
+}
+function hitungCekTunai() {
+  const fisik = parseRibuan(document.getElementById('cek-tunai-fisik').value), btn = document.getElementById('btn-cek-tunai-catat'), el = document.getElementById('cek-tunai-hasil');
+  if (!fisik) { el.innerHTML = ''; btn.disabled = true; return; }
+  const app = hitungSaldoTunai(), sel = fisik - app;
+  el.innerHTML = sel === 0 ? '<div class="tk-cek tk-ok">✅ Sama persis dengan aplikasi.</div>'
+    : `<div class="tk-cek tk-beda">Uang asli ${rupiah(fisik)} − aplikasi ${rupiah(app)} = <b>${rpTanda(sel)}</b> (${sel > 0 ? 'uang asli lebih banyak — ada pemasukan Tunai yang belum tercatat atau pengeluaran yang salah sumber' : 'uang asli lebih sedikit — ada pengeluaran Tunai yang belum tercatat'}). Koreksi akan dicatat sebagai <b>${sel > 0 ? 'Pemasukan' : 'Pengeluaran'} Tunai ${rupiah(Math.abs(sel))}</b>.</div>`;
+  btn.disabled = sel === 0;
+}
+document.getElementById('cek-tunai-fisik')?.addEventListener('input', e => { e.target.value = e.target.value ? formatRibuan(parseRibuan(e.target.value)) : ''; hitungCekTunai(); });
+document.getElementById('btn-cek-tunai-catat')?.addEventListener('click', () => {
+  if (currentRole !== 'developer') return;
+  const fisik = parseRibuan(document.getElementById('cek-tunai-fisik').value), tgl = document.getElementById('cek-tunai-tgl').value || today();
+  const alasan = document.getElementById('cek-tunai-alasan').value.trim(), app = hitungSaldoTunai(), sel = fisik - app;
+  if (!fisik || !sel) return;
+  if (!alasan) { toast('Tulis alasan koreksi dulu', 'error'); document.getElementById('cek-tunai-alasan').focus(); return; }
+  confirmDelete(`Catat <b>${sel > 0 ? 'Pemasukan' : 'Pengeluaran'} Tunai ${rupiah(Math.abs(sel))}</b> tanggal ${esc(tgl)}?<br><small>Alasan: ${esc(alasan)}<br>Setelah ini saldo Tunai aplikasi = ${rupiah(fisik)}.</small>`, async () => {
+    try {
+      await addDoc(collection(db, 'lk_kasir'), { tgl, jenis: sel > 0 ? 'pemasukan' : 'pengeluaran', kategori: 'lainnya', jumlah: Math.abs(sel), via: 'tunai', rekeningId: null, supplierId: null,
+        ket: `Koreksi hitung kas tunai: ${alasan} (uang asli ${rupiah(fisik)}, aplikasi ${rupiah(app)})`, koreksiKasTunai: true, uangFisik: fisik, saldoAplikasi: app, ...inputByFields(), createdAt: serverTimestamp() });
+      toast('Koreksi tercatat — saldo Tunai sekarang sama dengan uang asli');
+      ['cek-tunai-fisik', 'cek-tunai-alasan'].forEach(id => { document.getElementById(id).value = ''; }); hitungCekTunai();
+    } catch (e) { toast('Gagal: ' + e.message, 'error'); }
+  }, 'Catat koreksi');
+});
+
 function renderDashboard() {
   // Jangan hitung saldo sebelum kas, rekening, transfer, saldo awal & tutup kasir termuat semua
   if (!saldoSiap()) {
@@ -987,13 +1042,8 @@ function renderDashboard() {
   const tbodySaldo = document.getElementById('tbody-saldo-rek');
   if (tbodySaldo) {
     tbodySaldo.innerHTML = '';
-    const mutasiMasukTunai  = mutasiData.filter(m => m.ke   === 'tunai').reduce((a, m) => a + Number(m.jumlah || 0), 0);
-    const mutasiKeluarTunai = mutasiData.filter(m => m.dari === 'tunai').reduce((a, m) => a + Number(m.jumlah || 0), 0);
-    const saldoTunai = saldoAwalTunai
-      + kasirData.filter(k => !k.via || k.via === 'tunai')
-          .reduce((a, k) => a + (k.jenis === 'pemasukan' ? 1 : -1) * Number(k.jumlah || 0), 0)
-      + mutasiMasukTunai - mutasiKeluarTunai
-      + tkSetoranDiterima();
+    const saldoTunai = hitungSaldoTunai();
+    renderCekTunai();
     const tunaiTr = document.createElement('tr');
     tunaiTr.innerHTML = `<td><strong>Tunai</strong></td><td>—</td><td class="${saldoTunai >= 0 ? 'text-green' : 'text-red'}"><strong>${rupiah(saldoTunai)}</strong></td>`;
     tbodySaldo.appendChild(tunaiTr);

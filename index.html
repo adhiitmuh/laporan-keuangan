@@ -1180,6 +1180,20 @@
           <button class="btn-primary" id="btn-simpan-saldo-tunai">Simpan Saldo Awal Tunai</button>
         </div>
 
+        <!-- Cek & Hitung Kas Tunai (Owner) -->
+        <div class="form-card" id="cek-tunai-wrap" style="display:none">
+          <h3>🧮 Cek &amp; Hitung Kas Tunai</h3>
+          <p class="text-muted-sm" style="margin:-4px 0 10px">Hitung uang tunai asli (brankas/buku manual), ketik di sini. Aplikasi menunjukkan selisih dan kemungkinan penyebabnya, lalu Bapak bisa mencatat koreksinya.</p>
+          <div id="cek-tunai-diag"></div>
+          <div class="form-grid" style="max-width:560px;margin-top:10px">
+            <div class="form-group"><label>Uang tunai asli hasil hitung (Rp)</label><input type="text" inputmode="numeric" autocomplete="off" id="cek-tunai-fisik" placeholder="cth: 376.050.000" /></div>
+            <div class="form-group"><label>Tanggal hitung</label><input type="date" id="cek-tunai-tgl" /></div>
+          </div>
+          <div id="cek-tunai-hasil" style="margin:8px 0"></div>
+          <div class="form-group" style="max-width:560px"><label>Alasan koreksi</label><input type="text" id="cek-tunai-alasan" placeholder="cth: Setoran UL 28/10–15/11 belum tercatat (sebelum Tutup Kasir)" /></div>
+          <button class="btn-primary" id="btn-cek-tunai-catat" disabled>Catat koreksi supaya sama dengan uang asli</button>
+        </div>
+
         <!-- Tambah Rekening -->
         <div class="form-card action-form" id="form-rekening-wrap">
           <h3>🏦 Tambah Rekening</h3>
@@ -1364,6 +1378,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- Naikkan ?v= setiap rilis supaya browser tidak mencampur versi lama & baru -->
-  <script type="module" src="app.js?v=20261126b"></script>
+  <script type="module" src="app.js?v=20261126c"></script>
 </body>
 </html>
