@@ -3300,6 +3300,7 @@ document.getElementById('btn-simpan-pengajuan')?.addEventListener('click', async
 
   if (!tgl || !kategori || !jumlah) { toast('Tanggal, kategori, dan jumlah wajib', 'error'); return; }
   if (kategori === 'piutang' && !piuNama) { toast('Nama peminjam wajib diisi', 'error'); return; }
+  if (kategori !== 'piutang' && /pinjam|piutang|kasbon|utang/i.test(ket) && !confirm('Keterangan menyebut pinjaman/piutang.\n\nKalau uang ini dipinjamkan dan nanti harus kembali, pilih kategori "Piutang / Pinjaman" — setelah disetujui otomatis masuk menu Piutang.\n\nOK = tetap ajukan dengan kategori sekarang\nBatal = ganti kategori')) { document.getElementById('pgj-kategori').focus(); return; }
   if (kategori === 'bayar-supplier' && !supplierId) { toast('Pilih supplier', 'error'); return; }
   if (via === 'transfer' && !rekeningId) { toast('Pilih rekening', 'error'); return; }
 
@@ -4144,6 +4145,14 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   const sumber = document.getElementById('piu-sumber').value;
   if (!sumber) { toast('Pilih "Uang diserahkan dari mana": Tunai / rekening, atau "Tidak dicatat ke kas" untuk piutang lama / barang dibawa dulu', 'error'); document.getElementById('piu-sumber').focus(); return; }
   const ket    = document.getElementById('piu-ket').value.trim();
+  // Pinjaman yang uangnya sudah keluar lewat Pengajuan/Kasir jangan dipotong dari kas lagi
+  if (sumber !== 'none') {
+    const hari = t => new Date(t + 'T00:00:00').getTime() / 864e5;
+    const mirip = kasirData.filter(k => k.jenis === 'pengeluaran' && Number(k.jumlah) === jumlah && k.tgl && Math.abs(hari(k.tgl) - hari(tgl)) <= 7
+      && !(editingPiuId && k.sumberPiutangId === editingPiuId));
+    if (mirip.length && !confirm(`Sudah ada pengeluaran kas ${rupiah(jumlah)} di sekitar tanggal ini:\n` + mirip.slice(0, 3).map(k => `• ${k.tgl} — ${k.ket || getKategoriLabel(k.kategori)}${k.sumberPengajuanOleh ? ' (pengajuan ' + k.sumberPengajuanOleh + ')' : ''}`).join('\n')
+      + `\n\nKalau itu uang pinjaman yang sama, pilih sumber "— Tidak dicatat ke kas" supaya kas tidak terpotong dua kali.\n\nOK = tetap potong kas\nBatal = kembali`)) { document.getElementById('piu-sumber').focus(); return; }
+  }
   if (editingPiuId && currentRole === 'developer') {
     try { await simpanEditPiutang({ nama, jumlah, tgl, sumber, ket }); }
     catch (e) { toast('Gagal: ' + e.message, 'error'); }
