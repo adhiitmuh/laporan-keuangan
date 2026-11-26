@@ -807,7 +807,7 @@ function updatePiuSumberHint() {
   const sel = document.getElementById('piu-sumber');
   const hint = document.getElementById('piu-sumber-hint');
   if (!sel || !hint) return;
-  hint.textContent = sel.value === 'none'
+  hint.textContent = !sel.value ? 'Pilih Tunai/rekening hanya kalau uangnya benar-benar diserahkan sekarang. Piutang lama atau nota barang → "Tidak dicatat ke kas".' : sel.value === 'none'
     ? 'Saldo kas tidak berubah; piutang & total aset bertambah. Untuk piutang lama atau barang yang dibawa dulu (belum bayar).'
     : 'Uang diserahkan sekarang dari akun ini: saldonya berkurang, piutang bertambah, total aset tetap.';
 }
@@ -869,7 +869,9 @@ function populateRekeningSelects() {
     none.value = 'none';
     none.textContent = '— Tidak dicatat ke kas';
     sel.appendChild(none);
-    sel.value = prevVal || 'tunai';
+    // Form piutang: wajib pilih sumber (dulu otomatis Tunai → pinjaman lama / nota barang ikut mengurangi kas Tunai)
+    if (selId === 'piu-sumber') sel.insertAdjacentHTML('afterbegin', '<option value="">-- Uang diserahkan dari mana? --</option>');
+    sel.value = prevVal || (selId === 'piu-sumber' ? '' : 'tunai');
   });
   updatePiuSumberHint();
 
@@ -4067,7 +4069,7 @@ function resetFormPiutang() {
   editingPiuId = null;
   ['piu-nama','piu-jumlah','piu-tgl','piu-cicilan','piu-tgl-cicilan','piu-ket'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('piu-tgl').value    = today();
-  document.getElementById('piu-sumber').value = 'tunai';
+  document.getElementById('piu-sumber').value = ''; updatePiuSumberHint();
   document.getElementById('piu-form-title').textContent = 'Tambah Piutang';
   document.getElementById('btn-simpan-piutang').textContent = 'Simpan Piutang';
   document.getElementById('btn-batal-edit-piutang').style.display = 'none';
@@ -4140,6 +4142,7 @@ document.getElementById('btn-simpan-piutang').addEventListener('click', async ()
   const tgl    = document.getElementById('piu-tgl').value;
   if (!nama || !jumlah || !tgl) { toast('Nama, jumlah, dan tanggal wajib diisi', 'error'); return; }
   const sumber = document.getElementById('piu-sumber').value;
+  if (!sumber) { toast('Pilih "Uang diserahkan dari mana": Tunai / rekening, atau "Tidak dicatat ke kas" untuk piutang lama / barang dibawa dulu', 'error'); document.getElementById('piu-sumber').focus(); return; }
   const ket    = document.getElementById('piu-ket').value.trim();
   if (editingPiuId && currentRole === 'developer') {
     try { await simpanEditPiutang({ nama, jumlah, tgl, sumber, ket }); }
