@@ -836,7 +836,7 @@ function populateRekeningSelects() {
   const beliSumSel = document.getElementById('beli-sumber');
   if (beliSumSel) {
     const prev = beliSumSel.value;
-    beliSumSel.innerHTML = '<option value="">-- Pilih sumber dana --</option><option value="tunai">💵 Tunai (laci/kas)</option>'
+    beliSumSel.innerHTML = '<option value="">-- Pilih sumber dana --</option>' + (currentRole === 'kasir' ? '' : '<option value="tunai">💵 Tunai (kas)</option>')
       + rekening.map(r => `<option value="${esc(r.id)}">🏦 ${esc(r.nama)} (${esc(r.bank)})</option>`).join('');
     beliSumSel.value = prev;
   }
@@ -1524,6 +1524,7 @@ document.getElementById('btn-batal-beli')?.addEventListener('click', resetBeliFo
 function aturSumberBeli() {
   const cara = document.getElementById('beli-carabayar').value, sel = document.getElementById('beli-sumber')
   document.getElementById('beli-sumber-wrap').style.display = cara === 'hutang' ? 'none' : ''
+  if (cara === 'tunai' && currentRole === 'kasir') { toast('Kasir tidak bisa membayar dari kas Tunai. Uang dari laci → catat di Tutup Kasir; kalau belum dibayar pilih Hutang.', 'error'); document.getElementById('beli-carabayar').value = 'hutang'; document.getElementById('beli-sumber-wrap').style.display = 'none'; return }
   if (cara === 'tunai' && !sel.value) sel.value = 'tunai'
   if (cara === 'transfer' && sel.value === 'tunai') sel.value = ''
 }
@@ -1551,6 +1552,7 @@ document.getElementById('btn-simpan-beli').addEventListener('click', async () =>
   const sumber    = caraBayar === 'hutang' ? '' : document.getElementById('beli-sumber').value;
   const sudahBayar = editingBeliId ? kasirData.find(k => k.autoFromBeli === editingBeliId) : null;
   if (caraBayar !== 'hutang' && !sudahBayar && !sumber) { toast('Pilih "Dibayar dari" (tunai / rekening) — atau pilih Hutang kalau belum dibayar', 'error'); return; }
+  if (currentRole === 'kasir' && sumber === 'tunai') { toast('Kasir tidak bisa membayar dari kas Tunai — pilih Hutang (dibayar pengurus) atau rekening', 'error'); return; }
   if (caraBayar === 'transfer' && sumber === 'tunai') { toast('Transfer harus dari rekening', 'error'); return; }
 
   const btn = document.getElementById('btn-simpan-beli');
@@ -2013,6 +2015,8 @@ function validateKasirData(d) {
   if (!d.tgl || !d.jumlah) { toast('Tanggal dan jumlah wajib diisi', 'error'); return false; }
   if (d.kategori === 'bayar-supplier' && !d.supplierId) { toast('Pilih supplier untuk pembayaran hutang', 'error'); return false; }
   if (d.kategori === 'piutang' && !d.piuNama) { toast('Nama peminjam wajib diisi', 'error'); return false; }
+  // Kasir tidak boleh mengeluarkan uang dari kas Tunai: uang keluar dari laci dicatat di Tutup Kasir, selain itu lewat Pengajuan
+  if (currentRole === 'kasir' && d.jenis === 'pengeluaran' && d.via === 'tunai') { toast('Kasir tidak bisa mencatat pengeluaran dari kas Tunai. Uang keluar dari laci → catat di 🧾 Tutup Kasir; selain itu → 📝 Pengajuan.', 'error'); return false; }
   if (d.via !== 'tunai' && !d.rekeningId) { toast(d.via === 'qris' ? 'Pilih rekening penampung QRIS' : 'Pilih rekening untuk transfer', 'error'); return false; }
   return true;
 }
