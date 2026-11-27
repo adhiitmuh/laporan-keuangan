@@ -105,6 +105,9 @@ const unsubs = [];
 // ═══════════════════════════════════════════════════════════════════════════════
 const rupiah       = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const today        = () => new Date().toISOString().split('T')[0];
+// Tinggi menu atas (berbeda di HP/iPad/desktop) → batas tinggi tabel supaya judul kolom tetap terlihat
+function aturTinggiTopbar() { const t = document.querySelector('.topbar'); if (t && t.offsetHeight) document.documentElement.style.setProperty('--tinggi-topbar', t.offsetHeight + 'px') }
+window.addEventListener('resize', aturTinggiTopbar); setTimeout(aturTinggiTopbar, 300); setTimeout(aturTinggiTopbar, 2000);
 const formatRibuan = n => Number(n || 0).toLocaleString('id-ID');
 const parseRibuan  = s => Number(String(s).replace(/\./g, '').replace(/,/g, '')) || 0;
 const monthOf = d => (d ? String(d).slice(0, 7) : '');
@@ -234,6 +237,7 @@ function showScreen(name) {
   document.getElementById('global-loading').classList.toggle('hidden', name !== 'loading');
   document.getElementById('login-screen').classList.toggle('hidden', name !== 'login');
   document.getElementById('app').classList.toggle('hidden', name !== 'app');
+  if (name === 'app') setTimeout(aturTinggiTopbar, 50);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

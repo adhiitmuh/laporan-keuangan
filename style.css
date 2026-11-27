@@ -384,10 +384,14 @@ body {
    TABLES
 ═══════════════════════════════════════════════════════ */
 .table-wrap {
-  overflow-x: auto; border-radius: var(--radius);
+  overflow: auto; border-radius: var(--radius);
   box-shadow: var(--shadow); background: var(--white);
   border: 1px solid var(--gray-border);
+  /* Judul kolom tetap terlihat saat tabel digulir: tabel panjang punya scroll sendiri setinggi layar */
+  max-height: calc(100vh - var(--tinggi-topbar, 120px) - 24px);
+  max-height: calc(100dvh - var(--tinggi-topbar, 120px) - 24px);
 }
+.table-wrap thead th { position: sticky; top: 0; z-index: 3; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {
   background: linear-gradient(135deg, var(--brand-tint), var(--brand-light));
